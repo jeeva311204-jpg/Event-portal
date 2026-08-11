@@ -1,8 +1,16 @@
+<<<<<<< HEAD
 ﻿const express = require("express");
 const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const Otp = require("../models/Otp");
 const { issueToken } = require("../middleware/auth");
+=======
+const express = require("express");
+const bcrypt = require("bcryptjs");
+const User = require("../models/User");
+const Otp = require("../models/Otp");
+const { auth, issueToken } = require("../middleware/auth");
+>>>>>>> 83ad66c (Initial commit)
 const { sendEmail } = require("../utils/email");
 const { addNotification } = require("../utils/notify");
 
@@ -143,4 +151,40 @@ router.post("/resend-otp", async (req, res) => {
     }
 });
 
+<<<<<<< HEAD
+=======
+
+router.get("/me", auth, async (req, res) => {
+    const user = await User.findById(req.user.id).select("-password");
+    if (!user) return res.status(404).json({ error: "User not found" });
+    res.json({ user: publicUser(user) });
+});
+
+router.patch("/me", auth, async (req, res) => {
+    const { name, phone, department, currentPassword, newPassword } = req.body;
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    if (phone && phone !== user.phone) {
+        if (!E164.test(phone)) return res.status(400).json({ error: "Phone must use international format, e.g. +919876543210" });
+        const exists = await User.findOne({ phone, _id: { $ne: user._id } });
+        if (exists) return res.status(409).json({ error: "Phone number already in use" });
+        user.phone = phone;
+    }
+    if (name) user.name = name.trim();
+    if (department) user.department = department.trim();
+
+    if (newPassword) {
+        if (!currentPassword || !(await bcrypt.compare(currentPassword, user.password))) {
+            return res.status(400).json({ error: "Current password is incorrect" });
+        }
+        if (newPassword.length < 6) return res.status(400).json({ error: "New password must be at least 6 characters" });
+        user.password = await bcrypt.hash(newPassword, 10);
+    }
+
+    await user.save();
+    res.json({ message: "Profile updated", token: issueToken(user), user: publicUser(user) });
+});
+
+>>>>>>> 83ad66c (Initial commit)
 module.exports = router;

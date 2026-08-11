@@ -1,4 +1,5 @@
 node_modules/
+<<<<<<< HEAD
 .env
 dist/
 .idea/
@@ -11,4 +12,6 @@ coverage/
 uploads/
 /.vscode/
 node_modules/
+=======
+>>>>>>> 83ad66c (Initial commit)
 .env

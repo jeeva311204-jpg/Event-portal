@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 ﻿const express = require("express");
+=======
+const express = require("express");
+>>>>>>> 83ad66c (Initial commit)
 const Event = require("../models/Event");
 const Registration = require("../models/Registration");
 const Review = require("../models/Review");
@@ -78,6 +82,39 @@ router.post("/", auth, role("admin", "organizer"), async (req, res) => {
     res.status(201).json({ message: "Event created successfully", event });
 });
 
+<<<<<<< HEAD
+=======
+
+router.put("/:id", auth, role("admin", "organizer"), async (req, res) => {
+    const event = await Event.findById(req.params.id);
+    if (!event) return res.status(404).json({ error: "Event not found" });
+
+    if (req.user.role !== "admin" && String(event.organizerId) !== String(req.user.id)) {
+        return res.status(403).json({ error: "Permission denied" });
+    }
+
+    const allowed = ["title", "description", "category", "date", "time", "venue", "department", "maxSeats", "status"];
+    for (const key of allowed) {
+        if (req.body[key] !== undefined) event[key] = key === "maxSeats" ? Number(req.body[key]) : req.body[key];
+    }
+
+    if (!event.title || !event.description || !event.category || !event.date || !event.time || !event.venue) {
+        return res.status(400).json({ error: "Please fill all required fields" });
+    }
+    if (!Number.isFinite(event.maxSeats) || event.maxSeats < 1) {
+        return res.status(400).json({ error: "Max seats must be at least 1" });
+    }
+
+    const registered = await Registration.countDocuments({ eventId: event._id });
+    if (event.maxSeats < registered) {
+        return res.status(400).json({ error: `Max seats cannot be below current registrations (${registered})` });
+    }
+
+    await event.save();
+    res.json({ message: "Event updated successfully", event });
+});
+
+>>>>>>> 83ad66c (Initial commit)
 router.delete("/:id", auth, role("admin", "organizer"), async (req, res) => {
     const event = await Event.findById(req.params.id);
     if (!event) return res.status(404).json({ error: "Event not found" });

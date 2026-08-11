@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 ﻿require("dotenv").config();
+=======
+require("dotenv").config();
+>>>>>>> 83ad66c (Initial commit)
 
 const express = require("express");
 const http = require("http");
@@ -25,6 +29,10 @@ app.use(express.json({ limit: "5mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 app.use("/api", require("./routes/auth"));
+<<<<<<< HEAD
+=======
+app.use("/api/admin", require("./routes/admin"));
+>>>>>>> 83ad66c (Initial commit)
 app.use("/api/events", require("./routes/events"));
 app.use("/api", require("./routes/registrations"));
 app.use("/api/notifications", require("./routes/notifications"));
