@@ -1,0 +1,509 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>College Event Portal</title>
+<script src="/socket.io/socket.io.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font-family: 'Segoe UI', Arial, sans-serif; background: #101c36; color: white; }
+nav { padding: 18px 40px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #394562; background: #0c1529; flex-wrap: wrap; gap: 10px; }
+.logo { font-size: 22px; font-weight: bold; cursor: pointer; color: #d4a73d; }
+.nav-links { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.container { max-width: 1100px; margin: auto; padding: 30px 20px; }
+.card { background: #f6f1e6; color: #101c36; padding: 25px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }
+input, select, textarea { width: 100%; padding: 11px; margin: 7px 0 15px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+button, .btn { padding: 10px 18px; border: none; border-radius: 6px; cursor: pointer; background: #d4a73d; color: #101c36; font-weight: bold; text-decoration: none; display: inline-block; font-size: 14px; transition: 0.2s; }
+button:hover, .btn:hover { opacity: .9; transform: translateY(-1px); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.btn-secondary { background: #394562; color: white; }
+.events { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+.event { background: #f6f1e6; color: #101c36; padding: 22px; border-radius: 12px; display: flex; flex-direction: column; justify-content: space-between; }
+.badge { display: inline-block; padding: 4px 10px; border-radius: 20px; background: #d4a73d; font-size: 12px; font-weight: bold; }
+.error { color: #ef4444; font-weight: bold; }
+.success { color: #16a34a; font-weight: bold; }
+.qr { max-width: 220px; display: block; margin: 20px auto; }
+.notif-badge { background: #ef4444; color: white; border-radius: 50%; padding: 2px 7px; font-size: 11px; margin-left: 3px; }
+#toast-banner { position: fixed; top: 20px; right: 20px; background: #16a34a; color: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); display: none; z-index: 1000; font-weight: bold; max-width: 320px; }
+#reader { width: 100%; max-width: 420px; margin: 15px auto; border-radius: 10px; overflow: hidden; }
+.scan-result { padding: 15px; border-radius: 8px; margin-top: 12px; font-weight: bold; }
+.scan-ok { background: #dcfce7; color: #166534; }
+.scan-warn { background: #fef9c3; color: #854d0e; }
+.scan-err { background: #fee2e2; color: #991b1b; }
+.live-feed { max-height: 260px; overflow-y: auto; margin-top: 15px; }
+.live-feed div { padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div id="toast-banner"></div>
+
+<nav>
+<div class="logo" onclick="loadHome()">Event Portal</div>
+<div class="nav-links" id="nav"></div>
+</nav>
+
+<div class="container">
+<div id="app"></div>
+</div>
+
+<script>
+const socket = io();
+
+socket.on("connect", () => {
+    if (user) socket.emit("join_user_room", user.id);
+});
+
+socket.on("realtime_notification", (notif) => {
+    showToast("New: " + notif.title + ": " + notif.message);
+    nav();
+});
+
+socket.on("broadcast_announcement", (ann) => {
+    showToast("Announcement: " + ann.title + ": " + ann.message);
+});
+
+socket.on("seat_update", () => {
+    if (document.getElementById("events")) refreshSeatsQuietly();
+});
+
+socket.on("checkin_broadcast", (data) => {
+    showToast("Live Check-In: " + data.userName + " checked in for " + data.eventTitle);
+    const feed = document.getElementById("live-feed");
+    if (feed) {
+        const row = document.createElement("div");
+        row.innerText = data.userName + " - " + data.eventTitle + " - " + new Date(data.attendedAt).toLocaleTimeString();
+        feed.prepend(row);
+    }
+});
+
+function showToast(msg) {
+    const t = document.getElementById("toast-banner");
+    t.innerText = msg;
+    t.style.display = "block";
+    setTimeout(() => { t.style.display = "none"; }, 4000);
+}
+
+let token = localStorage.getItem("token");
+let user = JSON.parse(localStorage.getItem("user") || "null");
+
+async function api(url, options = {}) {
+    options.headers = options.headers || {};
+    options.headers["Content-Type"] = "application/json";
+    if (token) options.headers.Authorization = "Bearer " + token;
+
+    const response = await fetch(url, options);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Request failed");
+    return data;
+}
+
+function saveLogin(data) {
+    token = data.token;
+    user = data.user;
+    localStorage.setItem("token", token);
+    localStorage.setItem("user", JSON.stringify(user));
+    socket.emit("join_user_room", user.id);
+}
+
+function logout() {
+    stopScanner();
+    localStorage.clear();
+    token = null;
+    user = null;
+    load();
+}
+async function nav() {
+    const n = document.getElementById("nav");
+    if (!user) {
+        n.innerHTML = "<button onclick=\"showLogin()\">Login</button>";
+        return;
+    }
+
+    let unreadCount = 0;
+    try {
+        const notifs = await api("/api/notifications");
+        unreadCount = notifs.filter(x => !x.read).length;
+    } catch (e) {}
+
+    let extraBtn = "";
+    if (user.role === "student") {
+        extraBtn = "<button onclick=\"loadHome()\">Events</button> " +
+            "<button onclick=\"myRegistrations()\">My Registrations</button> " +
+            "<button onclick=\"showNotifications()\">Notifications" + (unreadCount > 0 ? " (" + unreadCount + ")" : "") + "</button>";
+    } else if (user.role === "organizer" || user.role === "admin") {
+        extraBtn = "<button onclick=\"loadHome()\">Events</button> " +
+            "<button onclick=\"organizerDashboard()\">Dashboard</button> " +
+            "<button onclick=\"showScanner()\">Live Scanner</button>";
+    }
+
+    n.innerHTML = extraBtn +
+        "<span style=\"margin-left:8px; font-weight:bold; color:white;\">" + user.name + "</span>" +
+        "<button onclick=\"logout()\" class=\"btn-secondary\">Logout</button>";
+}
+
+function showLogin() {
+    nav();
+    document.getElementById("app").innerHTML = `
+    <div class="card">
+        <h1>Login</h1>
+        <p id="loginError" class="error"></p>
+        <input id="email" type="email" placeholder="Email">
+        <input id="password" type="password" placeholder="Password">
+        <button onclick="login()">Login</button>
+        <p>Don't have an account? <button onclick="showRegister()">Register</button></p>
+        <hr>
+        <b>Demo Accounts</b>
+        <p>Admin: admin@college.edu - Organizer: organizer@college.edu - Student: student1@college.edu</p>
+        <p>Password: password123</p>
+    </div>
+    `;
+}
+
+let pendingUserId = null;
+
+async function login() {
+    try {
+        const data = await api("/api/login", {
+            method: "POST",
+            body: JSON.stringify({
+                email: document.getElementById("email").value,
+                password: document.getElementById("password").value
+            })
+        });
+        if (data.twoFactorRequired) {
+            pendingUserId = data.userId;
+            show2FAModal(data.message, data.channel);
+        }
+    } catch (e) {
+        document.getElementById("loginError").innerText = e.message;
+    }
+}
+
+function show2FAModal(message, channel) {
+    document.getElementById("app").innerHTML = `
+    <div class="card">
+        <h1>2-Step Verification</h1>
+        <p>${message}</p>
+        <input id="otpCode" placeholder="Enter 6-digit code" maxlength="6">
+        <p id="otpError" class="error"></p>
+        <button onclick="verifyOtp()">Verify & Login</button>
+        <button onclick="resendOtp()" class="btn-secondary">Resend Code</button>
+        <button onclick="showLogin()" class="btn-secondary">Cancel</button>
+    </div>
+    `;
+}
+
+async function verifyOtp() {
+    try {
+        const data = await api("/api/verify-otp", {
+            method: "POST",
+            body: JSON.stringify({ userId: pendingUserId, otpCode: document.getElementById("otpCode").value })
+        });
+        saveLogin(data);
+        load();
+    } catch (e) {
+        document.getElementById("otpError").innerText = e.message;
+    }
+}
+
+async function resendOtp() {
+    try {
+        const data = await api("/api/resend-otp", { method: "POST", body: JSON.stringify({ userId: pendingUserId }) });
+        showToast(data.message);
+    } catch (e) {
+        alert(e.message);
+    }
+}
+
+function showRegister() {
+    nav();
+    document.getElementById("app").innerHTML = `
+    <div class="card">
+        <h1>Create Student Account</h1>
+        <input id="rname" placeholder="Full Name">
+        <input id="remail" type="email" placeholder="Email Address">
+        <input id="rphone" type="tel" placeholder="Phone with country code, e.g. +919876543210">
+        <input id="rpassword" type="password" placeholder="Password">
+        <input id="rdept" placeholder="Department">
+        <p id="regError" class="error"></p>
+        <button onclick="register()">Create Account</button>
+        <button onclick="showLogin()" class="btn-secondary">Back</button>
+    </div>
+    `;
+}
+
+async function register() {
+    try {
+        const data = await api("/api/register", {
+            method: "POST",
+            body: JSON.stringify({
+                name: document.getElementById("rname").value,
+                email: document.getElementById("remail").value,
+                phone: document.getElementById("rphone").value,
+                password: document.getElementById("rpassword").value,
+                department: document.getElementById("rdept").value
+            })
+        });
+        saveLogin(data);
+        load();
+    } catch (e) {
+        document.getElementById("regError").innerText = e.message;
+    }
+}
+async function loadHome() {
+    stopScanner();
+    await nav();
+    const events = await api("/api/events");
+    document.getElementById("app").innerHTML = `
+    <div class="card">
+        <h1>Upcoming College Events</h1>
+        <input id="search" placeholder="Search events..." oninput="searchEvents()">
+    </div>
+    <div class="events" id="events"></div>
+    `;
+    displayEvents(events);
+}
+
+async function searchEvents() {
+    const q = document.getElementById("search").value;
+    const events = await api("/api/events?search=" + encodeURIComponent(q));
+    displayEvents(events);
+}
+
+async function refreshSeatsQuietly() {
+    try {
+        const events = await api("/api/events");
+        events.forEach(e => {
+            const el = document.querySelector("[data-seats=\"" + e.id + "\"]");
+            if (el) el.innerText = e.seatsLeft + " / " + e.maxSeats;
+        });
+    } catch (e) {}
+}
+
+function displayEvents(events) {
+    const box = document.getElementById("events");
+    if (!box) return;
+    box.innerHTML = events.map(e => `
+        <div class="event">
+            <div>
+                <span class="badge">${e.category}</span>
+                <h2>${e.title}</h2>
+                <p>${e.description}</p>
+                <p><b>Date:</b> ${e.date} | <b>Time:</b> ${e.time}</p>
+                <p><b>Venue:</b> ${e.venue}</p>
+                <p><b>Seats Left:</b> <span data-seats="${e.id}">${e.seatsLeft} / ${e.maxSeats}</span></p>
+            </div>
+            <div style="margin-top:15px; display:flex; gap:8px; flex-wrap:wrap;">
+                <button onclick="registerEvent('${e.id}')" ${e.seatsLeft <= 0 ? "disabled" : ""}>
+                    ${e.seatsLeft <= 0 ? "Full" : "Register"}
+                </button>
+                <a class="btn btn-secondary" href="/api/events/${e.id}/export-ics">Calendar</a>
+            </div>
+        </div>
+    `).join("");
+}
+
+async function registerEvent(id) {
+    if (!user) { alert("Please login first"); showLogin(); return; }
+    try {
+        await api("/api/events/" + id + "/register", { method: "POST" });
+        alert("Registered successfully! Check My Registrations for your QR ticket.");
+        loadHome();
+    } catch (e) {
+        alert(e.message);
+    }
+}
+
+async function myRegistrations() {
+    stopScanner();
+    await nav();
+    const data = await api("/api/my-registrations");
+    document.getElementById("app").innerHTML = `
+    <div class="card">
+        <h1>My Registered Events</h1>
+        ${data.map(r => `
+            <div class="card" style="background:#fff;">
+                <h2>${r.event ? r.event.title : r.eventTitle}</h2>
+                <img class="qr" src="${r.qrCode}">
+                <p>Status: ${r.attended ? "<b class='success'>Attended</b>" : "Registered - show this QR at the door"}</p>
+                ${r.attended ? `<a class="btn" href="/api/certificate/${r._id || r.id}" onclick="downloadCert(event, '${r._id || r.id}')">Download Certificate</a>` : ""}
+            </div>
+        `).join("")}
+    </div>
+    `;
+}
+
+async function downloadCert(ev, regId) {
+    ev.preventDefault();
+    const res = await fetch("/api/certificate/" + regId, { headers: { Authorization: "Bearer " + token } });
+    if (!res.ok) { alert((await res.json()).error); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "certificate.pdf"; a.click();
+}
+async function organizerDashboard() {
+    stopScanner();
+    await nav();
+    const events = await api("/api/events");
+    const mine = user.role === "admin" ? events : events.filter(e => e.organizerName === user.name);
+
+    document.getElementById("app").innerHTML = `
+    <div class="card">
+        <h1>Organizer Dashboard</h1>
+        <button onclick="showCreateEvent()">+ Create New Event</button>
+    </div>
+    <div class="events">
+        ${mine.map(e => `
+            <div class="event">
+                <div>
+                    <span class="badge">${e.category}</span>
+                    <h2>${e.title}</h2>
+                    <p>${e.registered} / ${e.maxSeats} registered</p>
+                    ${e.avgRating ? `<p>Rating: ${e.avgRating} (${e.reviewCount} reviews)</p>` : ""}
+                </div>
+                <div style="margin-top:15px; display:flex; gap:8px;">
+                    <button onclick="showScanner('${e.id}')">Scan Tickets</button>
+                    <button class="btn-secondary" onclick="deleteEvent('${e.id}')">Delete</button>
+                </div>
+            </div>
+        `).join("")}
+    </div>
+    `;
+}
+
+function showCreateEvent() {
+    document.getElementById("app").innerHTML = `
+    <div class="card">
+        <h1>Create Event</h1>
+        <input id="etitle" placeholder="Event Title">
+        <textarea id="edesc" placeholder="Description" rows="3"></textarea>
+        <select id="ecat">
+            <option>Technical</option><option>Cultural</option><option>Sports</option><option>Workshop</option>
+        </select>
+        <input id="edate" type="date">
+        <input id="etime" type="time">
+        <input id="evenue" placeholder="Venue">
+        <input id="edept" placeholder="Department (or All Departments)">
+        <input id="eseats" type="number" placeholder="Max Seats" value="50">
+        <p id="createError" class="error"></p>
+        <button onclick="createEvent()">Publish Event</button>
+        <button class="btn-secondary" onclick="organizerDashboard()">Cancel</button>
+    </div>
+    `;
+}
+
+async function createEvent() {
+    try {
+        await api("/api/events", {
+            method: "POST",
+            body: JSON.stringify({
+                title: document.getElementById("etitle").value,
+                description: document.getElementById("edesc").value,
+                category: document.getElementById("ecat").value,
+                date: document.getElementById("edate").value,
+                time: document.getElementById("etime").value,
+                venue: document.getElementById("evenue").value,
+                department: document.getElementById("edept").value,
+                maxSeats: document.getElementById("eseats").value
+            })
+        });
+        organizerDashboard();
+    } catch (e) {
+        document.getElementById("createError").innerText = e.message;
+    }
+}
+
+async function deleteEvent(id) {
+    if (!confirm("Delete this event? All registrants will be notified.")) return;
+    try {
+        await api("/api/events/" + id, { method: "DELETE" });
+        organizerDashboard();
+    } catch (e) {
+        alert(e.message);
+    }
+}
+
+async function showNotifications() {
+    stopScanner();
+    await nav();
+    const notifs = await api("/api/notifications");
+    await api("/api/notifications/mark-read", { method: "POST" });
+    document.getElementById("app").innerHTML = `
+    <div class="card">
+        <h1>Notifications</h1>
+        ${notifs.map(n => `<div class="card" style="background:#fff;"><h3>${n.title}</h3><p>${n.message}</p></div>`).join("")}
+    </div>
+    `;
+}
+let html5QrCode = null;
+let scannerLocked = false;
+
+async function showScanner() {
+    await nav();
+    document.getElementById("app").innerHTML = `
+    <div class="card">
+        <h1>Live Ticket Scanner</h1>
+        <p>Point the camera at a student's QR ticket. Check-in happens instantly and is broadcast live to this screen and the student's phone.</p>
+        <div id="reader"></div>
+        <div id="scanStatus"></div>
+        <h3>Live check-in feed</h3>
+        <div class="live-feed" id="live-feed"></div>
+    </div>
+    `;
+
+    html5QrCode = new Html5Qrcode("reader");
+    try {
+        const cameras = await Html5Qrcode.getCameras();
+        const backCam = cameras.find(c => /back|rear|environment/i.test(c.label)) || cameras[cameras.length - 1];
+        await html5QrCode.start(
+            backCam ? backCam.id : { facingMode: "environment" },
+            { fps: 10, qrbox: 250 },
+            onScanSuccess,
+            () => {}
+        );
+    } catch (err) {
+        document.getElementById("scanStatus").innerHTML =
+            "<div class=\"scan-result scan-err\">Camera access failed: " + (err.message || err) + ". Check browser camera permissions.</div>";
+    }
+}
+
+async function onScanSuccess(decodedText) {
+    if (scannerLocked) return;
+    scannerLocked = true;
+
+    try {
+        const data = await api("/api/scan", { method: "POST", body: JSON.stringify({ qrPayload: decodedText }) });
+        const box = document.getElementById("scanStatus");
+        if (data.alreadyCheckedIn) {
+            box.innerHTML = "<div class=\"scan-result scan-warn\">Already checked in: " + data.name + " - " + data.eventTitle + "</div>";
+        } else {
+            box.innerHTML = "<div class=\"scan-result scan-ok\">Checked in: " + data.name + " - " + data.eventTitle + "</div>";
+        }
+    } catch (e) {
+        document.getElementById("scanStatus").innerHTML = "<div class=\"scan-result scan-err\">" + e.message + "</div>";
+    }
+
+    setTimeout(() => { scannerLocked = false; }, 2500);
+}
+
+function stopScanner() {
+    if (html5QrCode) {
+        html5QrCode.stop().then(() => html5QrCode.clear()).catch(() => {});
+        html5QrCode = null;
+    }
+}
+
+async function load() {
+    await nav();
+    loadHome();
+}
+
+load();
+</script>
+</body>
+</html>
