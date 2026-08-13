@@ -38,12 +38,31 @@ npm run dev
 
 ## Environment
 
-Create a `.env` with values for MongoDB connection, JWT secret, and email credentials. Example keys:
+Create a `.env` file with values for MongoDB connection, JWT secret, and email credentials. Example keys:
 
-- `MONGODB_URI`
+- `PORT` (optional)
+- `MONGO_URI`
 - `JWT_SECRET`
-- `EMAIL_USER`
-- `EMAIL_PASS`
+- `QR_SECRET`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USER`
+- `SMTP_PASS`
+- `SMTP_FROM` (optional)
+
+Example:
+
+```bash
+PORT=5000
+MONGO_URI=mongodb://127.0.0.1:27017/college_event_portal
+JWT_SECRET=your_jwt_secret
+QR_SECRET=your_qr_secret
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=your@example.com
+SMTP_PASS=your_email_password
+SMTP_FROM="College Event Portal <your@example.com>"
+```
 
 ## License
 

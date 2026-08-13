@@ -6,10 +6,11 @@ const Registration = require("../models/Registration");
 const { auth, role } = require("../middleware/auth");
 const { addNotification } = require("../utils/notify");
 const { sendEmail } = require("../utils/email");
+const asyncHandler = require("../utils/asyncHandler");
 
 const router = express.Router();
 
-router.post("/events/:eventId/register", auth, role("student"), async (req, res) => {
+router.post("/events/:eventId/register", auth, role("student"), asyncHandler(async (req, res) => {
     const event = await Event.findById(req.params.eventId);
     if (!event) return res.status(404).json({ error: "Event not found" });
 
@@ -55,15 +56,15 @@ router.post("/events/:eventId/register", auth, role("student"), async (req, res)
     });
 
     res.json({ message: "Successfully registered", registration });
-});
+}));
 
-router.get("/my-registrations", auth, role("student"), async (req, res) => {
+router.get("/my-registrations", auth, role("student"), asyncHandler(async (req, res) => {
     const registrations = await Registration.find({ userId: req.user.id }).lean();
     const withEvents = await Promise.all(registrations.map(async (r) => ({
         ...r,
         event: await Event.findById(r.eventId).lean()
     })));
     res.json(withEvents);
-});
+}));
 
 module.exports = router;

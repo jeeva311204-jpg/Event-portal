@@ -3,10 +3,11 @@ const PDFDocument = require("pdfkit");
 const Registration = require("../models/Registration");
 const Event = require("../models/Event");
 const { auth } = require("../middleware/auth");
+const asyncHandler = require("../utils/asyncHandler");
 
 const router = express.Router();
 
-router.get("/events/:eventId/export-ics", async (req, res) => {
+router.get("/events/:eventId/export-ics", asyncHandler(async (req, res) => {
     const event = await Event.findById(req.params.eventId).lean();
     if (!event) return res.status(404).send("Event not found");
 
@@ -29,9 +30,9 @@ router.get("/events/:eventId/export-ics", async (req, res) => {
     res.setHeader("Content-Type", "text/calendar");
     res.setHeader("Content-Disposition", `attachment; filename="event-${event._id}.ics"`);
     res.send(icsData);
-});
+}));
 
-router.get("/certificate/:registrationId", auth, async (req, res) => {
+router.get("/certificate/:registrationId", auth, asyncHandler(async (req, res) => {
     const registration = await Registration.findById(req.params.registrationId);
     if (!registration) return res.status(404).json({ error: "Registration not found" });
 
@@ -64,6 +65,6 @@ router.get("/certificate/:registrationId", auth, async (req, res) => {
     doc.fontSize(13).text(`Date: ${event.date} | Venue: ${event.venue}`, 0, 340, { align: "center" });
 
     doc.end();
-});
+}));
 
 module.exports = router;

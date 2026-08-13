@@ -1,25 +1,31 @@
-<<<<<<< HEAD
-﻿const express = require("express");
-=======
 const express = require("express");
->>>>>>> 83ad66c (Initial commit)
 const Event = require("../models/Event");
 const Registration = require("../models/Registration");
 const Review = require("../models/Review");
 const { auth, role } = require("../middleware/auth");
+const asyncHandler = require("../utils/asyncHandler");
+
+function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 const router = express.Router();
 
-router.get("/", async (req, res) => {
+router.get("/", asyncHandler(async (req, res) => {
     const { search, category, department } = req.query;
     const filter = {};
 
     if (search) {
-        const q = new RegExp(search, "i");
+        const escapedSearch = escapeRegExp(search);
+        const q = new RegExp(escapedSearch, "i");
         filter.$or = [{ title: q }, { description: q }, { venue: q }];
     }
-    if (category) filter.category = new RegExp(`^${category}$`, "i");
-    if (department) filter.department = new RegExp(`^${department}$`, "i");
+    if (category) {
+        filter.category = new RegExp(`^${escapeRegExp(category)}$`, "i");
+    }
+    if (department) {
+        filter.department = new RegExp(`^${escapeRegExp(department)}$`, "i");
+    }
 
     const events = await Event.find(filter).sort({ date: 1 }).lean();
 
@@ -41,9 +47,9 @@ router.get("/", async (req, res) => {
     }));
 
     res.json(enriched);
-});
+}));
 
-router.get("/:id", async (req, res) => {
+router.get("/:id", asyncHandler(async (req, res) => {
     const event = await Event.findById(req.params.id).lean();
     if (!event) return res.status(404).json({ error: "Event not found" });
 
@@ -51,14 +57,21 @@ router.get("/:id", async (req, res) => {
     const reviews = await Review.find({ eventId: event._id }).lean();
 
     res.json({ ...event, id: event._id, registered, seatsLeft: event.maxSeats - registered, reviews });
-});
+}));
 
-router.get("/:id/registrations", auth, role("admin", "organizer"), async (req, res) => {
+router.get("/:id/registrations", auth, role("admin", "organizer"), asyncHandler(async (req, res) => {
+    const event = await Event.findById(req.params.id);
+    if (!event) return res.status(404).json({ error: "Event not found" });
+
+    if (req.user.role !== "admin" && String(event.organizerId) !== req.user.id) {
+        return res.status(403).json({ error: "Permission denied" });
+    }
+
     const regs = await Registration.find({ eventId: req.params.id }).lean();
     res.json(regs);
-});
+}));
 
-router.post("/", auth, role("admin", "organizer"), async (req, res) => {
+router.post("/", auth, role("admin", "organizer"), asyncHandler(async (req, res) => {
     const { title, description, category, date, time, venue, department, maxSeats } = req.body;
 
     if (!title || !description || !category || !date || !time || !venue) {
@@ -80,10 +93,7 @@ router.post("/", auth, role("admin", "organizer"), async (req, res) => {
     });
 
     res.status(201).json({ message: "Event created successfully", event });
-});
-
-<<<<<<< HEAD
-=======
+}));
 
 router.put("/:id", auth, role("admin", "organizer"), async (req, res) => {
     const event = await Event.findById(req.params.id);
@@ -114,8 +124,7 @@ router.put("/:id", auth, role("admin", "organizer"), async (req, res) => {
     res.json({ message: "Event updated successfully", event });
 });
 
->>>>>>> 83ad66c (Initial commit)
-router.delete("/:id", auth, role("admin", "organizer"), async (req, res) => {
+router.delete("/:id", auth, role("admin", "organizer"), asyncHandler(async (req, res) => {
     const event = await Event.findById(req.params.id);
     if (!event) return res.status(404).json({ error: "Event not found" });
 
@@ -136,6 +145,6 @@ router.delete("/:id", auth, role("admin", "organizer"), async (req, res) => {
     await event.deleteOne();
 
     res.json({ message: "Event deleted and attendees notified" });
-});
+}));
 
 module.exports = router;

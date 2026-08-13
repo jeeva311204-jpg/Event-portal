@@ -4,10 +4,11 @@ const Registration = require("../models/Registration");
 const Event = require("../models/Event");
 const { auth, role } = require("../middleware/auth");
 const { addNotification } = require("../utils/notify");
+const asyncHandler = require("../utils/asyncHandler");
 
 const router = express.Router();
 
-router.post("/", auth, role("admin", "organizer"), async (req, res) => {
+router.post("/", auth, role("admin", "organizer"), asyncHandler(async (req, res) => {
     const { qrPayload } = req.body;
     if (!qrPayload) return res.status(400).json({ error: "QR payload required" });
 
@@ -64,6 +65,6 @@ router.post("/", auth, role("admin", "organizer"), async (req, res) => {
         eventTitle: event.title,
         alreadyCheckedIn: false
     });
-});
+}));
 
 module.exports = router;

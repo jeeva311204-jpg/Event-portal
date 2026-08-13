@@ -13,6 +13,7 @@ const { auth, issueToken } = require("../middleware/auth");
 >>>>>>> 83ad66c (Initial commit)
 const { sendEmail } = require("../utils/email");
 const { addNotification } = require("../utils/notify");
+const asyncHandler = require("../utils/asyncHandler");
 
 const router = express.Router();
 
@@ -34,26 +35,28 @@ function generateOtp() {
     return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-router.post("/register", async (req, res) => {
+router.post("/register", asyncHandler(async (req, res) => {
     const { name, email, phone, password, department } = req.body;
+    const normalizedEmail = email?.toLowerCase().trim();
+    const normalizedPhone = phone?.trim();
 
-    if (!name || !email || !phone || !password) {
+    if (!name || !normalizedEmail || !normalizedPhone || !password) {
         return res.status(400).json({ error: "Name, Email, Phone, and Password are required." });
     }
 
-    if (!E164.test(phone)) {
+    if (!E164.test(normalizedPhone)) {
         return res.status(400).json({ error: "Phone number must be in international format, e.g. +919876543210" });
     }
 
-    const exists = await User.findOne({ $or: [{ email }, { phone }] });
+    const exists = await User.findOne({ $or: [{ email: normalizedEmail }, { phone: normalizedPhone }] });
     if (exists) {
         return res.status(409).json({ error: "An account with this email or phone already exists" });
     }
 
     const user = await User.create({
         name,
-        email,
-        phone,
+        email: normalizedEmail,
+        phone: normalizedPhone,
         password: await bcrypt.hash(password, 10),
         role: "student",
         department: department || "General"
@@ -65,10 +68,15 @@ router.post("/register", async (req, res) => {
         .catch(() => {});
 
     res.json({ message: "Registration successful", token: issueToken(user), user: publicUser(user) });
-});
+}));
 
-router.post("/login", async (req, res) => {
-    const { email, password } = req.body;
+router.post("/login", asyncHandler(async (req, res) => {
+    const email = req.body.email?.toLowerCase().trim();
+    const { password } = req.body;
+
+    if (!email || !password) {
+        return res.status(400).json({ error: "Email and password are required" });
+    }
 
     const user = await User.findOne({ email });
     if (!user || !(await bcrypt.compare(password, user.password))) {
@@ -104,9 +112,9 @@ router.post("/login", async (req, res) => {
         console.error("[2FA] Email send failed:", emailErr.message);
         res.status(502).json({ error: "Could not send verification code by email. Please try again later." });
     }
-});
+}));
 
-router.post("/verify-otp", async (req, res) => {
+router.post("/verify-otp", asyncHandler(async (req, res) => {
     const { userId, otpCode } = req.body;
 
     const record = await Otp.findOne({ userId, code: otpCode });
@@ -126,9 +134,9 @@ router.post("/verify-otp", async (req, res) => {
     if (!user) return res.status(404).json({ error: "User not found" });
 
     res.json({ message: "2FA verification successful", token: issueToken(user), user: publicUser(user) });
-});
+}));
 
-router.post("/resend-otp", async (req, res) => {
+router.post("/resend-otp", asyncHandler(async (req, res) => {
     const { userId } = req.body;
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: "User not found" });
@@ -149,7 +157,7 @@ router.post("/resend-otp", async (req, res) => {
     } catch (err) {
         res.status(502).json({ error: "Could not resend the email. Please wait a moment and try again." });
     }
-});
+}));
 
 <<<<<<< HEAD
 =======

@@ -1,5 +1,4 @@
 node_modules/
-<<<<<<< HEAD
 .env
 dist/
 .idea/
@@ -10,8 +9,4 @@ yarn-error.log*
 .DS_Store
 coverage/
 uploads/
-/.vscode/
-node_modules/
-=======
->>>>>>> 83ad66c (Initial commit)
-.env
+.vscode/

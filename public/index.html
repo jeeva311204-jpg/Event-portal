@@ -26,6 +26,7 @@ button, .btn { padding: 10px 18px; border: none; border-radius: 6px; cursor: poi
 button:hover, .btn:hover { opacity: .9; transform: translateY(-1px); }
 button:disabled { opacity: .5; cursor: not-allowed; }
 .btn-secondary { background: #394562; color: white; }
+.btn-info { background: #0284c7; color: white; }
 .events { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
 .event { background: #f6f1e6; color: #101c36; padding: 22px; border-radius: 12px; display: flex; flex-direction: column; justify-content: space-between; }
 .badge { display: inline-block; padding: 4px 10px; border-radius: 20px; background: #d4a73d; font-size: 12px; font-weight: bold; }
@@ -41,11 +42,45 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .scan-err { background: #fee2e2; color: #991b1b; }
 .live-feed { max-height: 260px; overflow-y: auto; margin-top: 15px; }
 .live-feed div { padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 13px; }
+
+/* Attendee Modal Styles */
+.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.7); display: flex; align-items: center; justify-content: center; z-index: 2000; padding: 20px; }
+.modal-content { background: #0c1529; color: white; border: 1px solid #394562; border-radius: 12px; width: 100%; max-width: 600px; max-height: 85vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+.modal-header { padding: 18px 24px; border-bottom: 1px solid #394562; display: flex; justify-content: space-between; align-items: center; background: #070d1a; }
+.modal-header h2 { margin: 0; font-size: 20px; color: #d4a73d; }
+.modal-close { background: transparent; border: none; color: #94a3b8; font-size: 22px; cursor: pointer; padding: 0; }
+.modal-close:hover { color: white; }
+.modal-body { padding: 20px; overflow-y: auto; flex: 1; }
+.modal-footer { padding: 15px 24px; border-top: 1px solid #394562; background: #070d1a; text-align: right; }
+.attendee-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; }
+.attendee-table th { border-bottom: 1px solid #394562; padding: 10px; color: #94a3b8; }
+.attendee-table td { border-bottom: 1px solid #1e293b; padding: 10px; }
+.attendee-table tr:hover { background: rgba(255, 255, 255, 0.05); }
 </style>
 </head>
 <body>
 
 <div id="toast-banner"></div>
+
+<!-- Modal Container for Attendees -->
+<div id="attendees-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <div>
+                <h2 id="modal-event-title">Event Attendees</h2>
+                <span id="modal-attendee-count" style="font-size: 12px; color: #94a3b8;">Total Registered: 0</span>
+            </div>
+            <button class="modal-close" onclick="closeAttendeesModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <input id="attendee-search" placeholder="Filter by student name or email..." oninput="filterAttendeesList()" style="margin-bottom: 15px;">
+            <div id="modal-attendees-list">Loading attendees...</div>
+        </div>
+        <div class="modal-footer">
+            <button onclick="closeAttendeesModal()" class="btn-secondary">Close</button>
+        </div>
+    </div>
+</div>
 
 <nav>
 <div class="logo" onclick="loadHome()">Event Portal</div>
@@ -94,7 +129,14 @@ function showToast(msg) {
 }
 
 let token = localStorage.getItem("token");
-let user = JSON.parse(localStorage.getItem("user") || "null");
+let user = null;
+
+try {
+    user = JSON.parse(localStorage.getItem("user") || "null");
+} catch (err) {
+    console.warn("Ignoring invalid stored user data.");
+    localStorage.removeItem("user");
+}
 
 async function api(url, options = {}) {
     options.headers = options.headers || {};
@@ -122,6 +164,7 @@ function logout() {
     user = null;
     load();
 }
+
 async function nav() {
     const n = document.getElementById("nav");
     if (!user) {
@@ -183,6 +226,9 @@ async function login() {
         if (data.twoFactorRequired) {
             pendingUserId = data.userId;
             show2FAModal(data.message, data.channel);
+        } else {
+            saveLogin(data);
+            load();
         }
     } catch (e) {
         document.getElementById("loginError").innerText = e.message;
@@ -260,6 +306,7 @@ async function register() {
         document.getElementById("regError").innerText = e.message;
     }
 }
+
 async function loadHome() {
     stopScanner();
     await nav();
@@ -284,7 +331,7 @@ async function refreshSeatsQuietly() {
     try {
         const events = await api("/api/events");
         events.forEach(e => {
-            const el = document.querySelector("[data-seats=\"" + e.id + "\"]");
+            const el = document.querySelector("[data-seats=\"" + (e._id || e.id) + "\"]");
             if (el) el.innerText = e.seatsLeft + " / " + e.maxSeats;
         });
     } catch (e) {}
@@ -301,13 +348,13 @@ function displayEvents(events) {
                 <p>${e.description}</p>
                 <p><b>Date:</b> ${e.date} | <b>Time:</b> ${e.time}</p>
                 <p><b>Venue:</b> ${e.venue}</p>
-                <p><b>Seats Left:</b> <span data-seats="${e.id}">${e.seatsLeft} / ${e.maxSeats}</span></p>
+                <p><b>Seats Left:</b> <span data-seats="${e._id || e.id}">${e.seatsLeft} / ${e.maxSeats}</span></p>
             </div>
             <div style="margin-top:15px; display:flex; gap:8px; flex-wrap:wrap;">
-                <button onclick="registerEvent('${e.id}')" ${e.seatsLeft <= 0 ? "disabled" : ""}>
+                <button onclick="registerEvent('${e._id || e.id}')" ${e.seatsLeft <= 0 ? "disabled" : ""}>
                     ${e.seatsLeft <= 0 ? "Full" : "Register"}
                 </button>
-                <a class="btn btn-secondary" href="/api/events/${e.id}/export-ics">Calendar</a>
+                <a class="btn btn-secondary" href="/api/events/${e._id || e.id}/export-ics">Calendar</a>
             </div>
         </div>
     `).join("");
@@ -352,6 +399,7 @@ async function downloadCert(ev, regId) {
     const a = document.createElement("a");
     a.href = url; a.download = "certificate.pdf"; a.click();
 }
+
 async function organizerDashboard() {
     stopScanner();
     await nav();
@@ -372,14 +420,79 @@ async function organizerDashboard() {
                     <p>${e.registered} / ${e.maxSeats} registered</p>
                     ${e.avgRating ? `<p>Rating: ${e.avgRating} (${e.reviewCount} reviews)</p>` : ""}
                 </div>
-                <div style="margin-top:15px; display:flex; gap:8px;">
-                    <button onclick="showScanner('${e.id}')">Scan Tickets</button>
-                    <button class="btn-secondary" onclick="deleteEvent('${e.id}')">Delete</button>
+                <div style="margin-top:15px; display:flex; gap:8px; flex-wrap:wrap;">
+                    <button class="btn-info" onclick="viewAttendees('${e._id || e.id}', '${e.title.replace(/'/g, "\\'")}')">Attendees</button>
+                    <button onclick="showScanner('${e._id || e.id}')">Scan</button>
+                    <button class="btn-secondary" onclick="deleteEvent('${e._id || e.id}')">Delete</button>
                 </div>
             </div>
         `).join("")}
     </div>
     `;
+}
+
+/* ==========================================
+   ATTENDEES MODAL LOGIC
+   ========================================== */
+let currentAttendees = [];
+
+async function viewAttendees(eventId, eventTitle) {
+    document.getElementById("modal-event-title").innerText = eventTitle;
+    document.getElementById("modal-attendees-list").innerHTML = "Loading attendees...";
+    document.getElementById("attendee-search").value = "";
+    document.getElementById("attendees-modal").style.display = "flex";
+
+    try {
+        const data = await api("/api/events/" + eventId + "/attendees");
+        currentAttendees = data.attendees || [];
+        document.getElementById("modal-attendee-count").innerText = "Total Registered: " + currentAttendees.length;
+        renderAttendeesList(currentAttendees);
+    } catch (e) {
+        document.getElementById("modal-attendees-list").innerHTML = "<p class='error'>Error: " + e.message + "</p>";
+    }
+}
+
+function renderAttendeesList(list) {
+    const box = document.getElementById("modal-attendees-list");
+    if (!list || list.length === 0) {
+        box.innerHTML = "<p style='color:#94a3b8;'>No registered users found.</p>";
+        return;
+    }
+
+    let html = `
+        <table class="attendee-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Name</th>
+                    <th>Email</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${list.map((u, i) => `
+                    <tr>
+                        <td>${i + 1}</td>
+                        <td style="font-weight:bold;">${u.name || 'Student'}</td>
+                        <td style="color:#d4a73d;">${u.email || 'N/A'}</td>
+                    </tr>
+                `).join("")}
+            </tbody>
+        </table>
+    `;
+    box.innerHTML = html;
+}
+
+function filterAttendeesList() {
+    const q = document.getElementById("attendee-search").value.toLowerCase();
+    const filtered = currentAttendees.filter(u => 
+        (u.name && u.name.toLowerCase().includes(q)) || 
+        (u.email && u.email.toLowerCase().includes(q))
+    );
+    renderAttendeesList(filtered);
+}
+
+function closeAttendeesModal() {
+    document.getElementById("attendees-modal").style.display = "none";
 }
 
 function showCreateEvent() {
@@ -397,13 +510,13 @@ function showCreateEvent() {
         <input id="edept" placeholder="Department (or All Departments)">
         <input id="eseats" type="number" placeholder="Max Seats" value="50">
         <p id="createError" class="error"></p>
-        <button onclick="createEvent()">Publish Event</button>
+        <button onclick="createNewEvent()">Publish Event</button>
         <button class="btn-secondary" onclick="organizerDashboard()">Cancel</button>
     </div>
     `;
 }
 
-async function createEvent() {
+async function createNewEvent() {
     try {
         await api("/api/events", {
             method: "POST",
@@ -423,6 +536,8 @@ async function createEvent() {
         document.getElementById("createError").innerText = e.message;
     }
 }
+
+function createEvent(){ return createNewEvent.apply(this, arguments); }
 
 async function deleteEvent(id) {
     if (!confirm("Delete this event? All registrants will be notified.")) return;
@@ -446,6 +561,7 @@ async function showNotifications() {
     </div>
     `;
 }
+
 let html5QrCode = null;
 let scannerLocked = false;
 
@@ -506,6 +622,10 @@ function stopScanner() {
 
 async function load() {
     await nav();
+    if (!user) {
+        showLogin();
+        return;
+    }
     loadHome();
 }
 
