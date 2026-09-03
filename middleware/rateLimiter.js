@@ -1,4 +1,4 @@
-﻿const rateLimit = require("express-rate-limit");
+const rateLimit = require("express-rate-limit");
 
 // Applies to register / login / forgot-password: fairly generous since
 // legitimate users can retype a wrong password a few times.

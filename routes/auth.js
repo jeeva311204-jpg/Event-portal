@@ -1,17 +1,56 @@
-﻿const express = require("express");
+const express = require("express");
 const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const Otp = require("../models/Otp");
 const { auth, issueToken } = require("../middleware/auth");
 const { sendEmail } = require("../utils/email");
 const { addNotification } = require("../utils/notify");
-const { isRealEmail } = require("../utils/emailValidator");
 const { authLimiter, otpLimiter } = require("../middleware/rateLimiter");
 const asyncHandler = require("../utils/asyncHandler");
 
 const router = express.Router();
 
 const E164 = /^\+[1-9]\d{7,14}$/;
+const EMAIL_FORMAT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Admin fallback email for demo/invalid emails
+const ADMIN_EMAIL = "jeeva311204@gmail.com";
+
+// Common demo/invalid email domains that should fallback to admin email
+const DEMO_INVALID_DOMAINS = new Set([
+    "test.com",
+    "example.com",
+    "example.org",
+    "example.net",
+    "fake.com",
+    "notreal.com",
+    "abc.com",
+    "xyz.com",
+    "asdf.com",
+    "sample.com",
+    "demo.com",
+    "test.mail",
+    "placeholder.com"
+]);
+
+/**
+ * Determines the email to send OTP to.
+ * Returns the user's email if valid, otherwise returns admin email.
+ */
+function getOtpRecipientEmail(userEmail) {
+    if (!userEmail) return ADMIN_EMAIL;
+    
+    const domain = userEmail.toLowerCase().split("@")[1];
+    if (!domain) return ADMIN_EMAIL;
+    
+    // If the domain is in the demo/invalid list, use admin email
+    if (DEMO_INVALID_DOMAINS.has(domain)) {
+        return ADMIN_EMAIL;
+    }
+    
+    // Otherwise use the user's email
+    return userEmail;
+}
 
 function publicUser(user) {
     return {
@@ -42,10 +81,14 @@ router.post("/register", authLimiter, asyncHandler(async (req, res) => {
         return res.status(400).json({ error: "Phone number must be in international format, e.g. +919876543210" });
     }
 
-    // Reject syntactically-valid emails whose domain can't receive mail at all
-    // (typos, placeholder domains, etc.) before creating the account.
-    if (!(await isRealEmail(normalizedEmail))) {
-        return res.status(400).json({ error: "Please enter a valid, deliverable email address." });
+    // Validate email format using regex pattern
+    if (!EMAIL_FORMAT.test(normalizedEmail)) {
+        return res.status(400).json({ error: "Please enter a valid email address." });
+    }
+
+    // Validate password: minimum 6 characters
+    if (password.length < 6) {
+        return res.status(400).json({ error: "Password must be at least 6 characters long." });
     }
 
     const exists = await User.findOne({ $or: [{ email: normalizedEmail }, { phone: normalizedPhone }] });
@@ -90,8 +133,12 @@ router.post("/login", authLimiter, asyncHandler(async (req, res) => {
     await Otp.create({ userId: user._id, code: otpCode, channel: "email", purpose: "login", expiresAt });
 
     try {
+        // Determine recipient email: use user's email if valid, otherwise use admin email
+        const recipientEmail = getOtpRecipientEmail(user.email);
+        const isAdminFallback = recipientEmail === ADMIN_EMAIL;
+
         await sendEmail(
-            user.email,
+            recipientEmail,
             "Your 2-Step Verification Code",
             `Your OTP for login is: ${otpCode}. It expires in 5 minutes.`,
             `<div style="font-family:sans-serif;padding:20px;background:#f4f4f4;">
@@ -106,7 +153,9 @@ router.post("/login", authLimiter, asyncHandler(async (req, res) => {
             twoFactorRequired: true,
             channel: "email",
             userId: user._id,
-            message: `A 6-digit verification code was emailed to ${user.email}`
+            message: isAdminFallback 
+                ? `Email domain not recognized. Verification code sent to admin email for verification.`
+                : `A 6-digit verification code was emailed to ${user.email}`
         });
     } catch (emailErr) {
         console.error("[2FA] Email send failed:", emailErr.message);
@@ -148,12 +197,21 @@ router.post("/resend-otp", otpLimiter, asyncHandler(async (req, res) => {
     await Otp.create({ userId: user._id, code: otpCode, channel: "email", purpose: "login", expiresAt });
 
     try {
+        // Determine recipient email: use user's email if valid, otherwise use admin email
+        const recipientEmail = getOtpRecipientEmail(user.email);
+        const isAdminFallback = recipientEmail === ADMIN_EMAIL;
+
         await sendEmail(
-            user.email,
+            recipientEmail,
             "Your 2-Step Verification Code",
             `Your OTP for login is: ${otpCode}. It expires in 5 minutes.`
         );
-        res.json({ message: `Code resent to ${user.email}` });
+        
+        res.json({ 
+            message: isAdminFallback 
+                ? `Code sent to admin email for verification.`
+                : `Code resent to ${user.email}`
+        });
     } catch (err) {
         res.status(502).json({ error: "Could not resend the email. Please wait a moment and try again." });
     }
@@ -175,8 +233,12 @@ router.post("/forgot-password", authLimiter, asyncHandler(async (req, res) => {
     await Otp.create({ userId: user._id, code: otpCode, channel: "email", purpose: "reset", expiresAt });
 
     try {
+        // Determine recipient email: use user's email if valid, otherwise use admin email
+        const recipientEmail = getOtpRecipientEmail(user.email);
+        const isAdminFallback = recipientEmail === ADMIN_EMAIL;
+
         await sendEmail(
-            user.email,
+            recipientEmail,
             "Your Password Reset Code",
             `Your password reset code is: ${otpCode}. It expires in 10 minutes. If you didn't request this, you can ignore this email.`,
             `<div style="font-family:sans-serif;padding:20px;background:#f4f4f4;">
@@ -186,7 +248,13 @@ router.post("/forgot-password", authLimiter, asyncHandler(async (req, res) => {
                 <p>This code is valid for 10 minutes. If you didn't request this, you can ignore this email.</p>
              </div>`
         );
-        res.json({ userId: user._id, message: `A password reset code was emailed to ${user.email}` });
+        
+        res.json({ 
+            userId: user._id, 
+            message: isAdminFallback 
+                ? `Email domain not recognized. Reset code sent to admin email for verification.`
+                : `A password reset code was emailed to ${user.email}`
+        });
     } catch (err) {
         console.error("[Reset] Email send failed:", err.message);
         res.status(502).json({ error: "Could not send the reset code by email. Please try again later." });
