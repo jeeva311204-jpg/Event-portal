@@ -1,62 +1,40 @@
-<<<<<<< HEAD
 # College Event Portal
 
-College Event Portal
-
-## Description
-
-College Event Portal is a Node.js/Express application for managing events, registrations, certificates, and notifications.
+A Node.js/Express/MongoDB application for managing college events, registrations, QR-based check-ins, and real-time notifications. Supports three user roles: Student, Organizer, and Admin.
 
 ## Features
 
-- User authentication
-- Event creation and registration
-- PDF certificates generation
-- QR code scanning
-- Real-time notifications via Socket.io
+- **User Authentication**: Email + OTP-based 2-step verification (requires SMTP)
+- **Event Management**: Create, edit, and manage events with seat limits and categories
+- **Registration & Check-in**: Student registration with QR-based ticket check-in and live scanner
+- **Certificates**: PDF certificate generation and download
+- **Real-time Notifications**: Socket.io-based notifications for seats, check-ins, and updates
+- **Role-based Dashboard**: Separate views for Student, Organizer, and Admin
+- **Notifications & Messaging**: Track event updates and user communications
+- **Reviews & Ratings**: Students can review events after attendance
 
 ## Requirements
 
-- Node.js 18+ (or compatible)
+- Node.js 18+
 - MongoDB
 
-## Install
+## Installation
 
 ```bash
 npm install
 ```
 
-## Run
+## Setup
 
-Start the server:
-
-```bash
-npm start
-# or for development
-npm run dev
-```
-
-## Environment
-
-Create a `.env` file with values for MongoDB connection, JWT secret, and email credentials. Example keys:
-
-- `PORT` (optional)
-- `MONGO_URI`
-- `JWT_SECRET`
-- `QR_SECRET`
-- `SMTP_HOST`
-- `SMTP_PORT`
-- `SMTP_USER`
-- `SMTP_PASS`
-- `SMTP_FROM` (optional)
-
-Example:
+1. Create a `.env` file in the project root:
 
 ```bash
 PORT=5000
+NODE_ENV=development
 MONGO_URI=mongodb://127.0.0.1:27017/college_event_portal
-JWT_SECRET=your_jwt_secret
-QR_SECRET=your_qr_secret
+JWT_SECRET=your_jwt_secret_min_32_chars
+QR_SECRET=your_qr_secret_min_32_chars
+CORS_ORIGIN=http://localhost:5000
 SMTP_HOST=smtp.example.com
 SMTP_PORT=587
 SMTP_USER=your@example.com
@@ -64,36 +42,33 @@ SMTP_PASS=your_email_password
 SMTP_FROM="College Event Portal <your@example.com>"
 ```
 
+2. Start the server:
+
+```bash
+npm start
+```
+
+The application will seed demo accounts automatically on first run.
+
+## Demo Accounts
+
+| Email | Password | Role |
+|-------|----------|------|
+| admin@college.edu | password123 | Admin |
+| organizer@college.edu | password123 | Organizer |
+| student1@college.edu | password123 | Student |
+
+**Note:** First login requires email OTP verification via configured SMTP.
+
+## Security
+
+⚠️ **Never commit `.env` or share credentials.**
+
+- `JWT_SECRET` and `QR_SECRET` are required and must be strong (min 32 chars in production)
+- If credentials were ever publicly exposed, rotate them immediately
+- CORS is restricted to `CORS_ORIGIN` (configure for production)
+- JWTs use httpOnly cookies (XSS-resistant)
+
 ## License
 
-Add a license if desired.
-=======
-# College Event Portal — Functional Edition
-
-## What was fixed/added
-- Student: Events, search/filter, event details, registration, QR ticket, certificate download, reviews, notifications and profile.
-- Organizer: Dashboard statistics, create/edit/delete events, attendee list, live QR scanner, notifications and profile.
-- Admin: Full dashboard, all events, user management, role changes, add/delete users, notifications and profile.
-- Event edit API and validation.
-- Admin statistics/user APIs.
-- Profile update/password-change API.
-- Better error handling, empty states and mobile-friendly UI.
-- Real-time notifications, seat updates and live check-in feed retained.
-
-## Run
-1. Copy `.env.example` to `.env` and fill in MongoDB, JWT/QR secrets and SMTP settings.
-2. Run `npm install`.
-3. Run `npm start`.
-4. Open `http://localhost:5000`.
-
-## Demo accounts
-- admin@college.edu
-- organizer@college.edu
-- student1@college.edu
-- Password: `password123`
-
-The first login uses email OTP 2-step verification, so SMTP must be configured.
-
-## Important
-Never commit `.env` or expose SMTP/MongoDB credentials. If credentials from an older local `.env` were shared publicly, rotate them.
->>>>>>> 83ad66c (Initial commit)
+Proprietary — College Event Portal

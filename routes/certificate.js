@@ -1,4 +1,4 @@
-﻿const express = require("express");
+const express = require("express");
 const PDFDocument = require("pdfkit");
 const Registration = require("../models/Registration");
 const Event = require("../models/Event");

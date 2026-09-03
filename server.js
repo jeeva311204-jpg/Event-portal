@@ -1,21 +1,33 @@
-<<<<<<< HEAD
-﻿require("dotenv").config();
-=======
 require("dotenv").config();
->>>>>>> 83ad66c (Initial commit)
 
 const missingSecrets = [];
 if (!process.env.JWT_SECRET) missingSecrets.push("JWT_SECRET");
 if (!process.env.QR_SECRET) missingSecrets.push("QR_SECRET");
+
 if (missingSecrets.length) {
-    console.warn(`[WARN] Missing environment variables: ${missingSecrets.join(", ")}. Using default development secrets.`);
-    process.env.JWT_SECRET = process.env.JWT_SECRET || "dev_jwt_secret_change_this";
-    process.env.QR_SECRET = process.env.QR_SECRET || "dev_qr_secret_change_this";
+    if (process.env.NODE_ENV === "production") {
+        throw new Error(
+            `FATAL: Missing required secrets in production: ${missingSecrets.join(", ")}. ` +
+            `Set these environment variables before starting the server.`
+        );
+    } else {
+        // Development only â€” allow fallback with loud warning
+        console.warn(`
+â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+â•‘ âš ï¸  WARNING: Using DEVELOPMENT SECRETS (NOT FOR PRODUCTION)    â•‘
+â•‘ Missing: ${missingSecrets.join(", ")}                                    â•‘
+â•‘ Set JWT_SECRET and QR_SECRET env vars to use real secrets.    â•‘
+â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•`);
+        process.env.JWT_SECRET = process.env.JWT_SECRET || "dev_jwt_secret_change_this";
+        process.env.QR_SECRET = process.env.QR_SECRET || "dev_qr_secret_change_this";
+    }
 }
 
 const express = require("express");
 const http = require("http");
 const path = require("path");
+const helmet = require("helmet");
+const swaggerUi = require("swagger-ui-express");
 const { Server } = require("socket.io");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
@@ -25,69 +37,53 @@ const { setIo } = require("./utils/notify");
 
 const User = require("./models/User");
 const Event = require("./models/Event");
-const Registration = require("./models/Registration"); // Required to look up registrations
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+
+// CORS_ORIGIN can be a single origin or a comma-separated list, e.g.
+// "https://portal.example.com,https://admin.example.com". Falls back to
+// "*" only outside production so local dev keeps working without setup.
+const allowedOrigins = (process.env.CORS_ORIGIN || "").split(",").map(o => o.trim()).filter(Boolean);
+const corsOrigin = allowedOrigins.length ? allowedOrigins : (process.env.NODE_ENV === "production" ? [] : "*");
+
+const io = new Server(server, { cors: { origin: corsOrigin } });
 
 app.set("io", io);
 setIo(io);
 
-app.use(cors());
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(express.json({ limit: "5mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
+// Simple liveness check for uptime monitors and Docker healthchecks.
+// Does not touch the database, so it stays fast and always responds
+// even if Mongo is briefly unreachable.
+app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", uptime: process.uptime() });
+});
+
+// Interactive API docs at /api/docs, generated from swagger.json.
+const swaggerDocument = require("./swagger.json");
+app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+
 // Standard Routes
 app.use("/api", require("./routes/auth"));
-<<<<<<< HEAD
-=======
 app.use("/api/admin", require("./routes/admin"));
->>>>>>> 83ad66c (Initial commit)
 app.use("/api/events", require("./routes/events"));
 app.use("/api", require("./routes/registrations"));
 app.use("/api/notifications", require("./routes/notifications"));
 app.use("/api/events", require("./routes/reviews"));
+app.use("/api/events", require("./routes/waitlist"));
 app.use("/api/scan", require("./routes/scan"));
 app.use("/api", require("./routes/certificate"));
 
-// ==========================================
-// NEW ROUTE: Fetch Attendees for an Event
-// ==========================================
-app.get("/api/events/:eventId/attendees", async (req, res) => {
-    try {
-        const { eventId } = req.params;
-
-        // Find the event
-        const event = await Event.findById(eventId);
-        if (!event) {
-            return res.status(404).json({ error: "Event not found" });
-        }
-
-        let attendees = [];
-
-        // Check if Event model uses a embedded array (e.g., registeredUsers / attendees)
-        if (event.registeredUsers && event.registeredUsers.length > 0) {
-            const populatedEvent = await Event.findById(eventId).populate("registeredUsers", "name email phone department");
-            attendees = populatedEvent.registeredUsers;
-        } 
-        // Fallback: Query the separate Registration model if registrations are stored in their own collection
-        else if (Registration) {
-            const registrations = await Registration.find({ eventId }).populate("userId", "name email phone department");
-            attendees = registrations.map(reg => reg.userId || { name: reg.userName, email: reg.userEmail });
-        }
-
-        res.status(200).json({
-            success: true,
-            eventTitle: event.title,
-            totalAttendees: attendees.length,
-            attendees
-        });
-    } catch (error) {
-        console.error("Error fetching attendees:", error);
-        res.status(500).json({ error: "Failed to fetch event attendees" });
-    }
-});
+// The unauthenticated "/api/events/:eventId/attendees" route that used to
+// live here has been removed â€” it leaked every attendee's name/email/phone
+// to anyone, with no login check. The authenticated equivalent already
+// exists at GET /api/events/:id/registrations (admin/organizer only) in
+// routes/events.js, plus a CSV export at .../registrations/export.
 
 // Error Handling Middleware
 app.use((err, req, res, next) => {
@@ -150,8 +146,39 @@ async function seed() {
 
 const PORT = process.env.PORT || 5000;
 
-connectDB()
-    .then(seed)
-    .then(() => {
-        server.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
-    });
+// Only auto-connect to Mongo and start listening when this file is run
+// directly (`node server.js` / `npm start`). When it's `require()`d â€” e.g.
+// by the Jest test suite in tests/ â€” we just export `app` so tests can hit
+// routes with supertest without opening a real port or DB connection.
+if (require.main === module) {
+    const { startReminderScheduler } = require("./utils/reminders");
+
+    connectDB()
+        .then(seed)
+        .then(() => {
+            server.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
+            startReminderScheduler();
+        });
+
+    // Graceful shutdown so in-flight requests finish and the Mongo
+    // connection closes cleanly instead of the process being killed
+    // mid-write.
+    const mongoose = require("mongoose");
+    function shutdown(signal) {
+        console.log(`\n${signal} received: closing server gracefully...`);
+        server.close(() => {
+            mongoose.connection.close(false).then(() => {
+                console.log("Closed remaining connections.");
+                process.exit(0);
+            });
+        });
+        setTimeout(() => {
+            console.error("Could not close connections in time, forcing shutdown.");
+            process.exit(1);
+        }, 10000).unref();
+    }
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => shutdown("SIGINT"));
+}
+
+module.exports = { app, server };

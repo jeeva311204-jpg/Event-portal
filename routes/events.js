@@ -1,4 +1,4 @@
-const express = require("express");
+﻿const express = require("express");
 const Event = require("../models/Event");
 const Registration = require("../models/Registration");
 const Review = require("../models/Review");
@@ -7,6 +7,11 @@ const asyncHandler = require("../utils/asyncHandler");
 
 function escapeRegExp(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function csvEscape(value) {
+    const str = String(value ?? "");
+    return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
 }
 
 const router = express.Router();
@@ -27,7 +32,18 @@ router.get("/", asyncHandler(async (req, res) => {
         filter.department = new RegExp(`^${escapeRegExp(department)}$`, "i");
     }
 
-    const events = await Event.find(filter).sort({ date: 1 }).lean();
+    // Pagination is opt-in via ?page=&limit= so the existing frontend,
+    // which expects a plain array, keeps working unchanged.
+    const page = Math.max(parseInt(req.query.page, 10) || 0, 0);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 0, 0), 100);
+
+    let query = Event.find(filter).sort({ date: 1 });
+    let total = null;
+    if (page && limit) {
+        total = await Event.countDocuments(filter);
+        query = query.skip((page - 1) * limit).limit(limit);
+    }
+    const events = await query.lean();
 
     const enriched = await Promise.all(events.map(async (event) => {
         const registered = await Registration.countDocuments({ eventId: event._id });
@@ -46,6 +62,9 @@ router.get("/", asyncHandler(async (req, res) => {
         };
     }));
 
+    if (total !== null) {
+        return res.json({ events: enriched, page, limit, total, totalPages: Math.ceil(total / limit) });
+    }
     res.json(enriched);
 }));
 
@@ -69,6 +88,30 @@ router.get("/:id/registrations", auth, role("admin", "organizer"), asyncHandler(
 
     const regs = await Registration.find({ eventId: req.params.id }).lean();
     res.json(regs);
+}));
+
+router.get("/:id/registrations/export", auth, role("admin", "organizer"), asyncHandler(async (req, res) => {
+    const event = await Event.findById(req.params.id);
+    if (!event) return res.status(404).json({ error: "Event not found" });
+
+    if (req.user.role !== "admin" && String(event.organizerId) !== req.user.id) {
+        return res.status(403).json({ error: "Permission denied" });
+    }
+
+    const regs = await Registration.find({ eventId: req.params.id }).sort({ createdAt: 1 }).lean();
+
+    const header = ["Name", "Email", "Phone", "Status", "Registered At", "Checked In At"];
+    const rows = regs.map(r => [
+        r.userName, r.userEmail, r.userPhone,
+        r.attended ? "Checked in" : "Registered",
+        new Date(r.createdAt).toISOString(),
+        r.attendedAt ? new Date(r.attendedAt).toISOString() : ""
+    ]);
+    const csv = [header, ...rows].map(row => row.map(csvEscape).join(",")).join("\r\n");
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="attendees-${event._id}.csv"`);
+    res.send(csv);
 }));
 
 router.post("/", auth, role("admin", "organizer"), asyncHandler(async (req, res) => {

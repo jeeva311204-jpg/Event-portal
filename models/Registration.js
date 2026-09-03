@@ -1,4 +1,4 @@
-﻿const mongoose = require("mongoose");
+const mongoose = require("mongoose");
 
 const registrationSchema = new mongoose.Schema({
     eventId: { type: mongoose.Schema.Types.ObjectId, ref: "Event", required: true },
@@ -10,9 +10,12 @@ const registrationSchema = new mongoose.Schema({
     qrToken: { type: String, required: true, unique: true },
     qrCode: { type: String, required: true },
     attended: { type: Boolean, default: false },
-    attendedAt: { type: Date }
+    attendedAt: { type: Date },
+    reminderSent: { type: Boolean, default: false },
+    checkinCode: { type: String, required: true }
 }, { timestamps: true });
 
 registrationSchema.index({ eventId: 1, userId: 1 }, { unique: true });
 
 module.exports = mongoose.model("Registration", registrationSchema);
+

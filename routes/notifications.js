@@ -1,4 +1,4 @@
-﻿const express = require("express");
+const express = require("express");
 const Notification = require("../models/Notification");
 const { auth } = require("../middleware/auth");
 const asyncHandler = require("../utils/asyncHandler");

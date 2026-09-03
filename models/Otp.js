@@ -3,7 +3,8 @@
 const otpSchema = new mongoose.Schema({
     userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     code: { type: String, required: true },
-    channel: { type: String, enum: ["sms", "email"], default: "sms" },
+    channel: { type: String, enum: ["sms", "email"], default: "email" },
+    purpose: { type: String, enum: ["login", "reset"], default: "login" },
     attempts: { type: Number, default: 0 },
     expiresAt: { type: Date, required: true }
 }, { timestamps: true });

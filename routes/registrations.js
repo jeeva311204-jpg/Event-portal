@@ -1,4 +1,4 @@
-﻿const express = require("express");
+const express = require("express");
 const jwt = require("jsonwebtoken");
 const QRCode = require("qrcode");
 const Event = require("../models/Event");
@@ -10,6 +10,10 @@ const asyncHandler = require("../utils/asyncHandler");
 
 const router = express.Router();
 
+function generateCheckinCode() {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
 router.post("/events/:eventId/register", auth, role("student"), asyncHandler(async (req, res) => {
     const event = await Event.findById(req.params.eventId);
     if (!event) return res.status(404).json({ error: "Event not found" });
@@ -17,19 +21,39 @@ router.post("/events/:eventId/register", auth, role("student"), asyncHandler(asy
     const already = await Registration.findOne({ eventId: event._id, userId: req.user.id });
     if (already) return res.status(409).json({ error: "Already registered for this event" });
 
-    const count = await Registration.countDocuments({ eventId: event._id });
-    if (count >= event.maxSeats) return res.status(400).json({ error: "Event is fully booked" });
+    // Atomically reserve a seat before creating the registration record.
+    // Using countDocuments + a separate create() left a window where two
+    // concurrent requests could both pass the "seats available" check and
+    // both register, overselling the event. This $inc is atomic at the
+    // database level regardless of concurrency.
+    const reserved = await Event.findOneAndUpdate(
+        { _id: event._id, $expr: { $lt: ["$seatsBooked", "$maxSeats"] } },
+        { $inc: { seatsBooked: 1 } },
+        { new: true }
+    );
+    if (!reserved) return res.status(400).json({ error: "Event is fully booked" });
 
-    const registration = await Registration.create({
-        eventId: event._id,
-        eventTitle: event.title,
-        userId: req.user.id,
-        userName: req.user.name,
-        userEmail: req.user.email,
-        userPhone: req.user.phone,
-        qrToken: "pending",
-        qrCode: "pending"
-    });
+    let registration;
+    try {
+        registration = await Registration.create({
+            eventId: event._id,
+            eventTitle: event.title,
+            userId: req.user.id,
+            userName: req.user.name,
+            userEmail: req.user.email,
+            userPhone: req.user.phone,
+            qrToken: "pending",
+            qrCode: "pending",
+            checkinCode: generateCheckinCode()
+        });
+    } catch (err) {
+        // Roll back the seat reservation if the registration record couldn't
+        // be created (e.g. a duplicate slipped in under a race, or a
+        // validation error).
+        await Event.findByIdAndUpdate(event._id, { $inc: { seatsBooked: -1 } });
+        if (err.code === 11000) return res.status(409).json({ error: "Already registered for this event" });
+        throw err;
+    }
 
     const qrToken = jwt.sign(
         { registrationId: registration._id.toString(), eventId: event._id.toString() },
@@ -47,12 +71,20 @@ router.post("/events/:eventId/register", auth, role("student"), asyncHandler(asy
     sendEmail(
         req.user.email,
         `Ticket Confirmation: ${event.title}`,
-        `Hello ${req.user.name},\n\nYour spot for "${event.title}" is confirmed!\nDate: ${event.date}\nVenue: ${event.venue}\nTicket ID: ${registration._id}`
+        `Hello ${req.user.name},\n\nYour spot for "${event.title}" is confirmed!\nDate: ${event.date}\nVenue: ${event.venue}\nTicket ID: ${registration._id}\n\nCheck-in code: ${registration.checkinCode}\nShow your QR ticket at the door. If the QR scanner isn't working, give the organizer this 6-digit check-in code instead.`,
+        `<div style="font-family:sans-serif;padding:20px;background:#f4f4f4;">
+            <h2>You're registered for ${event.title}!</h2>
+            <p>Hello ${req.user.name},</p>
+            <p><b>Date:</b> ${event.date}<br><b>Venue:</b> ${event.venue}</p>
+            <p>Show your QR ticket at the door. If the scanner isn't working, give the organizer this code instead:</p>
+            <h1 style="color:#d4a73d;letter-spacing:4px;">${registration.checkinCode}</h1>
+         </div>`
     ).catch(() => {});
 
+    const count = await Registration.countDocuments({ eventId: event._id });
     req.app.get("io").emit("seat_update", {
         eventId: event._id,
-        seatsLeft: event.maxSeats - (count + 1)
+        seatsLeft: event.maxSeats - count
     });
 
     res.json({ message: "Successfully registered", registration });

@@ -51,6 +51,18 @@ router.delete("/users/:id", async (req, res) => {
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ error: "User not found" });
 
+    // Release seats this user was holding on events they don't own, so
+    // seatsBooked (the atomic registration gate in routes/registrations.js)
+    // stays accurate after their registrations are removed below. Each
+    // freed seat is then offered to the next person on that event's
+    // waitlist, if there is one.
+    const { promoteFromWaitlist } = require("./waitlist");
+    const theirRegs = await Registration.find({ userId: user._id }).select("eventId");
+    for (const reg of theirRegs) {
+        await Event.findByIdAndUpdate(reg.eventId, { $inc: { seatsBooked: -1 } });
+        await promoteFromWaitlist(req.app.get("io"), reg.eventId).catch(() => {});
+    }
+
     const ownedEvents = await Event.find({ organizerId: user._id }).select("_id");
     const eventIds = ownedEvents.map(e => e._id);
     if (eventIds.length) await Registration.deleteMany({ eventId: { $in: eventIds } });

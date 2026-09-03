@@ -1,4 +1,4 @@
-﻿const mongoose = require("mongoose");
+const mongoose = require("mongoose");
 
 const eventSchema = new mongoose.Schema({
     title: { type: String, required: true },
@@ -9,6 +9,7 @@ const eventSchema = new mongoose.Schema({
     venue: { type: String, required: true },
     department: { type: String, default: "All Departments" },
     maxSeats: { type: Number, default: 50 },
+    seatsBooked: { type: Number, default: 0 },
     organizerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     organizerName: { type: String, required: true },
     status: { type: String, enum: ["upcoming", "ongoing", "completed", "cancelled"], default: "upcoming" }

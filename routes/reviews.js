@@ -1,4 +1,4 @@
-﻿const express = require("express");
+const express = require("express");
 const Registration = require("../models/Registration");
 const Review = require("../models/Review");
 const { auth, role } = require("../middleware/auth");

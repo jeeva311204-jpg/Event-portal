@@ -1,4 +1,4 @@
-﻿const express = require("express");
+const express = require("express");
 const jwt = require("jsonwebtoken");
 const Registration = require("../models/Registration");
 const Event = require("../models/Event");
@@ -9,19 +9,31 @@ const asyncHandler = require("../utils/asyncHandler");
 const router = express.Router();
 
 router.post("/", auth, role("admin", "organizer"), asyncHandler(async (req, res) => {
-    const { qrPayload } = req.body;
-    if (!qrPayload) return res.status(400).json({ error: "QR payload required" });
+    const { qrPayload, checkinCode } = req.body;
+    if (!qrPayload && !checkinCode) return res.status(400).json({ error: "QR payload or check-in code required" });
 
-    let decoded;
-    try {
-        decoded = jwt.verify(qrPayload, process.env.QR_SECRET);
-    } catch (err) {
-        return res.status(400).json({ error: "This QR code is invalid, forged, or expired." });
-    }
+    let registration;
 
-    const registration = await Registration.findById(decoded.registrationId);
-    if (!registration || registration.qrToken !== qrPayload) {
-        return res.status(404).json({ error: "Ticket not found" });
+    if (checkinCode) {
+        // Manual fallback for when the camera/QR scan isn't working: the
+        // student reads out their 6-digit check-in code (emailed at
+        // registration) and the organizer types it in here instead.
+        const code = String(checkinCode).trim();
+        if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: "Check-in code must be 6 digits" });
+        registration = await Registration.findOne({ checkinCode: code });
+        if (!registration) return res.status(404).json({ error: "No registration found with that check-in code" });
+    } else {
+        let decoded;
+        try {
+            decoded = jwt.verify(qrPayload, process.env.QR_SECRET);
+        } catch (err) {
+            return res.status(400).json({ error: "This QR code is invalid, forged, or expired." });
+        }
+
+        registration = await Registration.findById(decoded.registrationId);
+        if (!registration || registration.qrToken !== qrPayload) {
+            return res.status(404).json({ error: "Ticket not found" });
+        }
     }
 
     const event = await Event.findById(registration.eventId);
