@@ -32,8 +32,6 @@ router.get("/", asyncHandler(async (req, res) => {
         filter.department = new RegExp(`^${escapeRegExp(department)}$`, "i");
     }
 
-    // Pagination is opt-in via ?page=&limit= so the existing frontend,
-    // which expects a plain array, keeps working unchanged.
     const page = Math.max(parseInt(req.query.page, 10) || 0, 0);
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 0, 0), 100);
 
@@ -115,16 +113,22 @@ router.get("/:id/registrations/export", auth, role("admin", "organizer"), asyncH
 }));
 
 router.post("/", auth, role("admin", "organizer"), asyncHandler(async (req, res) => {
-    const { title, description, category, date, time, venue, department, maxSeats } = req.body;
+    const { title, description, category, date, time, venue, department, maxSeats, fee } = req.body;
 
     if (!title || !description || !category || !date || !time || !venue) {
         return res.status(400).json({ error: "Please fill all required fields" });
+    }
+
+    const parsedFee = Number(fee) || 0;
+    if (parsedFee < 0) {
+        return res.status(400).json({ error: "Fee cannot be negative" });
     }
 
     const event = await Event.create({
         title, description, category, date, time, venue,
         department: department || "All Departments",
         maxSeats: Number(maxSeats) || 50,
+        fee: parsedFee,
         organizerId: req.user.id,
         organizerName: req.user.name,
         status: "upcoming"
@@ -146,9 +150,10 @@ router.put("/:id", auth, role("admin", "organizer"), async (req, res) => {
         return res.status(403).json({ error: "Permission denied" });
     }
 
-    const allowed = ["title", "description", "category", "date", "time", "venue", "department", "maxSeats", "status"];
+    const allowed = ["title", "description", "category", "date", "time", "venue", "department", "maxSeats", "fee", "status"];
+    const numericFields = ["maxSeats", "fee"];
     for (const key of allowed) {
-        if (req.body[key] !== undefined) event[key] = key === "maxSeats" ? Number(req.body[key]) : req.body[key];
+        if (req.body[key] !== undefined) event[key] = numericFields.includes(key) ? Number(req.body[key]) : req.body[key];
     }
 
     if (!event.title || !event.description || !event.category || !event.date || !event.time || !event.venue) {
@@ -156,6 +161,9 @@ router.put("/:id", auth, role("admin", "organizer"), async (req, res) => {
     }
     if (!Number.isFinite(event.maxSeats) || event.maxSeats < 1) {
         return res.status(400).json({ error: "Max seats must be at least 1" });
+    }
+    if (!Number.isFinite(event.fee) || event.fee < 0) {
+        return res.status(400).json({ error: "Fee cannot be negative" });
     }
 
     const registered = await Registration.countDocuments({ eventId: event._id });

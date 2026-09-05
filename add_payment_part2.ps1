@@ -1,3 +1,43 @@
+﻿# ============================================================
+# Add Razorpay Payment Feature - Part 2 (Frontend)
+# ============================================================
+# What this adds to public/index.html:
+#  1. Loads the Razorpay Checkout script.
+#  2. Shows the event fee ("Free" or "₹NNN") on the events list,
+#     event details page, and the organizer create/edit form.
+#  3. registerEvent() now checks the event's fee: free events
+#     register exactly as before; paid events open the Razorpay
+#     Checkout popup, then call /api/payments/verify on success.
+#  4. Organizer's create/edit event form gets a "Fee" input.
+#
+# Run this AFTER add_payment_part1.ps1, from your project root.
+# USAGE:  .\add_payment_part2.ps1
+# ============================================================
+
+$ErrorActionPreference = "Stop"
+
+if (-not (Test-Path ".\package.json")) {
+    Write-Host "ERROR: Run this script from your project root (the folder containing package.json)." -ForegroundColor Red
+    exit 1
+}
+
+$stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$backupDir = ".\_pre_payment_backup_$stamp"
+New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+if (Test-Path "public\index.html") {
+    New-Item -ItemType Directory -Path (Join-Path $backupDir "public") -Force | Out-Null
+    Copy-Item "public\index.html" -Destination (Join-Path $backupDir "public\index.html") -Force
+    Write-Host "Backed up public\index.html to $backupDir" -ForegroundColor Yellow
+}
+
+function Write-Utf8NoBom($Path, $Content) {
+    $dir = Split-Path $Path
+    if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText((Join-Path (Get-Location) $Path), $Content, $enc)
+}
+
+$indexHtml = @'
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -7,6 +47,7 @@
 <title>College Event Portal</title>
 <script src="/socket.io/socket.io.js"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <style>
 :root{--bg:#0b1428;--panel:#111e38;--card:#f8f3e8;--gold:#d4a73d;--muted:#8fa0bf;--line:#2b3955;--danger:#ef4444;--success:#16a34a}
 *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:radial-gradient(circle at 20% 20%, #0d061f 0%, #05010e 50%, #020005 100%);color:#e2e8f0;min-height:100vh}
@@ -119,11 +160,49 @@ async function refreshSeatsQuietly(){try{const events=await api("/api/events");e
 function displayEvents(events){
  const box=document.getElementById("events");if(!box)return;
  if(!events.length){box.innerHTML='<div class="card empty">No events found. Try a different search or filter.</div>';return}
- box.innerHTML=events.map(e=>`<article class="event"><div><span class="badge">${esc(e.category)}</span><h2>${esc(e.title)}</h2><p>${esc(e.description)}</p><p>📅 <b>${fmtDate(e.date)}</b> · ⏰ ${fmtTime(e.time)}</p><p>📍 ${esc(e.venue)}</p><p>🏫 ${esc(e.department||"All Departments")}</p><p>💺 Seats: <span data-seats="${e.id}">${e.seatsLeft} / ${e.maxSeats}</span></p>${e.avgRating?`<p>⭐ ${e.avgRating} (${e.reviewCount} reviews)</p>`:""}</div><div class="actions"><button onclick="eventDetails('${e.id}')">View Details</button>${e.seatsLeft<=0&&e.status!=="completed"?`<button onclick="joinWaitlist('${e.id}')">Join Waitlist</button>`:`<button onclick="registerEvent('${e.id}')" ${e.seatsLeft<=0||e.status==="completed"?"disabled":""}>Register</button>`}<a class="btn btn-secondary" href="/api/events/${e.id}/export-ics">Calendar</a></div></article>`).join("")
+ box.innerHTML=events.map(e=>`<article class="event"><div><span class="badge">${esc(e.category)}</span><h2>${esc(e.title)}</h2><p>${esc(e.description)}</p><p>📅 <b>${fmtDate(e.date)}</b> · ⏰ ${fmtTime(e.time)}</p><p>📍 ${esc(e.venue)}</p><p>🏫 ${esc(e.department||"All Departments")}</p><p>💺 Seats: <span data-seats="${e.id}">${e.seatsLeft} / ${e.maxSeats}</span></p><p>💳 <b>${e.fee>0?"₹"+e.fee:"Free"}</b></p>${e.avgRating?`<p>⭐ ${e.avgRating} (${e.reviewCount} reviews)</p>`:""}</div><div class="actions"><button onclick="eventDetails('${e.id}')">View Details</button>${e.seatsLeft<=0&&e.status!=="completed"?`<button onclick="joinWaitlist('${e.id}')">Join Waitlist</button>`:`<button onclick="registerEvent('${e.id}')" ${e.seatsLeft<=0||e.status==="completed"?"disabled":""}>${e.fee>0?"Pay & Register":"Register"}</button>`}<a class="btn btn-secondary" href="/api/events/${e.id}/export-ics">Calendar</a></div></article>`).join("")
 }
 async function eventDetails(id){
- try{const e=await api("/api/events/"+id);setApp(`<div class="card"><button class="btn-secondary" onclick="loadHome()">← Back</button><span class="badge" style="margin-left:8px">${esc(e.category)}</span><h1>${esc(e.title)}</h1><p>${esc(e.description)}</p><div class="grid"><div><b>📅 Date</b><p>${fmtDate(e.date)}</p></div><div><b>⏰ Time</b><p>${fmtTime(e.time)}</p></div><div><b>📍 Venue</b><p>${esc(e.venue)}</p></div><div><b>💺 Availability</b><p>${e.seatsLeft} / ${e.maxSeats}</p></div></div><div class="actions">${e.seatsLeft<=0?`<button onclick="joinWaitlist('${e.id}')">Join Waitlist</button>`:`<button onclick="registerEvent('${e.id}')">Register Now</button>`}<a class="btn btn-secondary" href="/api/events/${e.id}/export-ics">Add to Calendar</a></div></div><div class="card"><h2>Reviews</h2>${e.reviews?.length?e.reviews.map(r=>`<div class="notif"><b>${esc(r.userName)}</b> · ${"⭐".repeat(Number(r.rating)||0)}<p>${esc(r.comment)}</p></div>`).join(""):'<p class="muted">No reviews yet.</p>'}</div>`)}catch(e){alert(e.message)}}
-async function registerEvent(id){if(!user){alert("Please login first");showLogin();return}if(user.role!=="student"){alert("Only student accounts can register for events.");return}try{await api("/api/events/"+id+"/register",{method:"POST"});showToast("Registration successful!");myRegistrations()}catch(e){alert(e.message)}}
+ try{const e=await api("/api/events/"+id);setApp(`<div class="card"><button class="btn-secondary" onclick="loadHome()">← Back</button><span class="badge" style="margin-left:8px">${esc(e.category)}</span><h1>${esc(e.title)}</h1><p>${esc(e.description)}</p><div class="grid"><div><b>📅 Date</b><p>${fmtDate(e.date)}</p></div><div><b>⏰ Time</b><p>${fmtTime(e.time)}</p></div><div><b>📍 Venue</b><p>${esc(e.venue)}</p></div><div><b>💺 Availability</b><p>${e.seatsLeft} / ${e.maxSeats}</p></div><div><b>💳 Fee</b><p>${e.fee>0?"₹"+e.fee:"Free"}</p></div></div><div class="actions">${e.seatsLeft<=0?`<button onclick="joinWaitlist('${e.id}')">Join Waitlist</button>`:`<button onclick="registerEvent('${e.id}')">${e.fee>0?"Pay ₹"+e.fee+" & Register":"Register Now"}</button>`}<a class="btn btn-secondary" href="/api/events/${e.id}/export-ics">Add to Calendar</a></div></div><div class="card"><h2>Reviews</h2>${e.reviews?.length?e.reviews.map(r=>`<div class="notif"><b>${esc(r.userName)}</b> · ${"⭐".repeat(Number(r.rating)||0)}<p>${esc(r.comment)}</p></div>`).join(""):'<p class="muted">No reviews yet.</p>'}</div>`)}catch(e){alert(e.message)}}
+async function registerEvent(id){
+ if(!user){alert("Please login first");showLogin();return}
+ if(user.role!=="student"){alert("Only student accounts can register for events.");return}
+ try{
+  const ev=await api("/api/events/"+id);
+  if(ev.fee>0){await payAndRegister(ev);return}
+  await api("/api/events/"+id+"/register",{method:"POST"});
+  showToast("Registration successful!");myRegistrations()
+ }catch(e){alert(e.message)}
+}
+async function payAndRegister(ev){
+ try{
+  const order=await api("/api/payments/create-order",{method:"POST",body:JSON.stringify({eventId:ev.id})});
+  const rzp=new Razorpay({
+   key:order.keyId,
+   amount:order.amount,
+   currency:order.currency,
+   order_id:order.orderId,
+   name:"College Event Portal",
+   description:order.eventTitle,
+   prefill:{name:user.name,email:user.email,contact:user.phone},
+   theme:{color:"#7928ca"},
+   handler:async function(response){
+    try{
+     await api("/api/payments/verify",{method:"POST",body:JSON.stringify({
+      razorpay_order_id:response.razorpay_order_id,
+      razorpay_payment_id:response.razorpay_payment_id,
+      razorpay_signature:response.razorpay_signature
+     })});
+     showToast("Payment successful — registration confirmed!");
+     myRegistrations();
+    }catch(err){alert("Payment succeeded but confirmation failed: "+err.message)}
+   },
+   modal:{ondismiss:function(){showToast("Payment cancelled")}}
+  });
+  rzp.on("payment.failed",function(resp){alert("Payment failed: "+(resp.error?.description||"Please try again."))});
+  rzp.open();
+ }catch(e){alert(e.message)}
+}
 async function joinWaitlist(id){if(!user){alert("Please login first");showLogin();return}if(user.role!=="student"){alert("Only student accounts can join a waitlist.");return}try{const d=await api("/api/events/"+id+"/waitlist",{method:"POST"});showToast(d.message)}catch(e){alert(e.message)}}
 
 async function myRegistrations(){
@@ -147,11 +226,11 @@ async function organizerDashboard(){
 }
 function eventManagerCard(e){return `<article class="event"><div><span class="badge">${esc(e.category)}</span><h2>${esc(e.title)}</h2><p>${fmtDate(e.date)} · ${fmtTime(e.time)} · ${esc(e.venue)}</p><p><b>${e.registered}</b> / ${e.maxSeats} registered · ${e.seatsLeft} seats left</p><p>Status: <b>${esc(e.status)}</b>${e.avgRating?` · ⭐ ${e.avgRating}`:""}</p></div><div class="actions"><button onclick="viewRegistrations('${e.id}')">Attendees</button><button onclick="editEvent('${e.id}')">Edit</button><button onclick="showScanner('${e.id}')">Scan</button><button class="btn-danger" onclick="deleteEvent('${e.id}')">Delete</button></div></article>`}
 function showCreateEvent(e=null){
- setApp(`<div class="card"><h1>${e?"Edit Event":"Create Event"}</h1><input id="etitle" placeholder="Event Title" value="${esc(e?.title||"")}"><textarea id="edesc" rows="3" placeholder="Description">${esc(e?.description||"")}</textarea><select id="ecat">${["Technical","Cultural","Sports","Workshop"].map(x=>`<option ${e?.category===x?"selected":""}>${x}</option>`).join("")}</select><input id="edate" type="date" value="${esc(e?.date||"")}"><input id="etime" type="time" value="${esc(e?.time||"")}"><input id="evenue" placeholder="Venue" value="${esc(e?.venue||"")}"><input id="edept" placeholder="Department" value="${esc(e?.department||"All Departments")}"><input id="eseats" type="number" min="1" value="${e?.maxSeats||50}"><select id="estatus">${["upcoming","ongoing","completed","cancelled"].map(x=>`<option ${e?.status===x?"selected":""}>${x}</option>`).join("")}</select><p id="createError" class="error"></p><div class="actions"><button onclick="saveEvent(${e?`'${e.id}'`:"null"})">${e?"Save Changes":"Publish Event"}</button><button class="btn-secondary" onclick="organizerDashboard()">Cancel</button></div></div>`)
+ setApp(`<div class="card"><h1>${e?"Edit Event":"Create Event"}</h1><input id="etitle" placeholder="Event Title" value="${esc(e?.title||"")}"><textarea id="edesc" rows="3" placeholder="Description">${esc(e?.description||"")}</textarea><select id="ecat">${["Technical","Cultural","Sports","Workshop"].map(x=>`<option ${e?.category===x?"selected":""}>${x}</option>`).join("")}</select><input id="edate" type="date" value="${esc(e?.date||"")}"><input id="etime" type="time" value="${esc(e?.time||"")}"><input id="evenue" placeholder="Venue" value="${esc(e?.venue||"")}"><input id="edept" placeholder="Department" value="${esc(e?.department||"All Departments")}"><input id="eseats" type="number" min="1" value="${e?.maxSeats||50}"><input id="efee" type="number" min="0" step="0.01" placeholder="Registration fee in ₹ (0 = free)" value="${e?.fee||0}"><select id="estatus">${["upcoming","ongoing","completed","cancelled"].map(x=>`<option ${e?.status===x?"selected":""}>${x}</option>`).join("")}</select><p id="createError" class="error"></p><div class="actions"><button onclick="saveEvent(${e?`'${e.id}'`:"null"})">${e?"Save Changes":"Publish Event"}</button><button class="btn-secondary" onclick="organizerDashboard()">Cancel</button></div></div>`)
 }
 async function editEvent(id){try{showCreateEvent(await api("/api/events/"+id))}catch(e){alert(e.message)}}
 async function saveEvent(id){
- const payload={title:document.getElementById("etitle").value.trim(),description:document.getElementById("edesc").value.trim(),category:document.getElementById("ecat").value,date:document.getElementById("edate").value,time:document.getElementById("etime").value,venue:document.getElementById("evenue").value.trim(),department:document.getElementById("edept").value.trim()||"All Departments",maxSeats:document.getElementById("eseats").value,status:document.getElementById("estatus").value};
+ const payload={title:document.getElementById("etitle").value.trim(),description:document.getElementById("edesc").value.trim(),category:document.getElementById("ecat").value,date:document.getElementById("edate").value,time:document.getElementById("etime").value,venue:document.getElementById("evenue").value.trim(),department:document.getElementById("edept").value.trim()||"All Departments",maxSeats:document.getElementById("eseats").value,fee:document.getElementById("efee").value,status:document.getElementById("estatus").value};
  try{await api(id?"/api/events/"+id:"/api/events",{method:id?"PUT":"POST",body:JSON.stringify(payload)});showToast(id?"Event updated":"Event published");organizerDashboard()}catch(e){document.getElementById("createError").textContent=e.message}}
 async function deleteEvent(id){if(!confirm("Delete this event and notify all attendees?"))return;try{await api("/api/events/"+id,{method:"DELETE"});showToast("Event deleted");organizerDashboard()}catch(e){alert(e.message)}}
 async function exportAttendeesCsv(id){try{const r=await fetch("/api/events/"+id+"/registrations/export",{headers:{Authorization:"Bearer "+token}});if(!r.ok){const x=await r.json();throw new Error(x.error)}const blob=await r.blob(),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="attendees.csv";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}catch(e){alert(e.message)}}
@@ -245,3 +324,16 @@ load();
 
 </body>
 </html>
+'@
+
+
+Write-Utf8NoBom "public\index.html" $indexHtml
+Write-Host "Wrote public\index.html." -ForegroundColor Green
+
+Write-Host ""
+Write-Host "Part 2 (frontend) complete." -ForegroundColor Green
+Write-Host "Next steps:" -ForegroundColor Green
+Write-Host "  1. Open .env and set RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET to your real Razorpay TEST keys." -ForegroundColor Green
+Write-Host "  2. npm start" -ForegroundColor Green
+Write-Host "  3. As admin/organizer, create or edit an event and set a Fee > 0." -ForegroundColor Green
+Write-Host "  4. As a student, click Register on that event to test the Razorpay Checkout popup." -ForegroundColor Green

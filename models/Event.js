@@ -10,6 +10,7 @@ const eventSchema = new mongoose.Schema({
     department: { type: String, default: "All Departments" },
     maxSeats: { type: Number, default: 50 },
     seatsBooked: { type: Number, default: 0 },
+    fee: { type: Number, default: 0, min: 0 },
     organizerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     organizerName: { type: String, required: true },
     status: { type: String, enum: ["upcoming", "ongoing", "completed", "cancelled"], default: "upcoming" }

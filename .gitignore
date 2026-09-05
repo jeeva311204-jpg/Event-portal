@@ -12,3 +12,7 @@ uploads/
 .vscode/
 
 *.bak-*
+
+_pre_payment_backup_*/
+_pre_rebuild_backup_*/
+_pre_receipt_backup_*/
