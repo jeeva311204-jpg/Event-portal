@@ -1,3 +1,53 @@
+﻿# ============================================================
+# Make Email Override Selective - Part 6
+# ============================================================
+# Fixes a problem with the Part 5 override: it was redirecting
+# ALL emails (real and fake) to one inbox. This makes it
+# selective - only emails to a fake/demo domain get redirected;
+# real addresses (Gmail, your college domain, etc.) always get
+# their own email normally.
+#
+# On RENDER, set BOTH of these env vars to test demo accounts
+# while keeping real accounts working normally:
+#   EMAIL_OVERRIDE_TO=jeeva311204@gmail.com
+#   EMAIL_OVERRIDE_FAKE_DOMAINS=college.edu
+#
+# (Comma-separate multiple fake domains if needed, e.g.
+#  "college.edu,example.com")
+#
+# Remove both before letting real students use the site for real,
+# since leaving them in production is otherwise harmless (real
+# addresses are never touched) but there's no reason to keep
+# testing infrastructure active once you're done with it.
+#
+# Run this from your project root, AFTER part 5 has already been
+# applied. USAGE:  .\add_payment_part6.ps1
+# ============================================================
+
+$ErrorActionPreference = "Stop"
+
+if (-not (Test-Path ".\package.json")) {
+    Write-Host "ERROR: Run this script from your project root (the folder containing package.json)." -ForegroundColor Red
+    exit 1
+}
+
+$stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$backupDir = ".\_pre_selectiveemail_backup_$stamp"
+New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+if (Test-Path "utils\email.js") {
+    New-Item -ItemType Directory -Path (Join-Path $backupDir "utils") -Force | Out-Null
+    Copy-Item "utils\email.js" -Destination (Join-Path $backupDir "utils\email.js") -Force
+    Write-Host "Backed up utils\email.js to $backupDir" -ForegroundColor Yellow
+}
+
+function Write-Utf8NoBom($Path, $Content) {
+    $dir = Split-Path $Path
+    if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText((Join-Path (Get-Location) $Path), $Content, $enc)
+}
+
+$emailJs = @'
 // Render's free tier blocks all outbound SMTP traffic (ports 25, 465, 587)
 // as of a September 2025 policy change, so nodemailer over SMTP can never
 // work there, no matter how correct the credentials are. Brevo's
@@ -71,3 +121,14 @@ async function sendEmail(to, subject, text, html) {
 }
 
 module.exports = { sendEmail };
+
+'@
+
+
+Write-Utf8NoBom "utils\email.js" $emailJs
+Write-Host "Wrote utils\email.js." -ForegroundColor Green
+
+Write-Host ""
+Write-Host "Part 6 (selective email override) complete." -ForegroundColor Green
+Write-Host "On Render, set EMAIL_OVERRIDE_FAKE_DOMAINS=college.edu alongside your existing EMAIL_OVERRIDE_TO." -ForegroundColor Green
+Write-Host "Real email addresses (Gmail, your college domain, etc) will now always get their own email - only college.edu addresses redirect to you." -ForegroundColor Green

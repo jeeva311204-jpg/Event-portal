@@ -17,25 +17,16 @@ async function sendEmail(to, subject, text, html) {
     }
 
     // Optional testing aid: the seeded demo accounts (admin@college.edu,
-    // organizer@college.edu, student1@college.edu) use a fake domain that
-    // can never receive real mail. Setting BOTH EMAIL_OVERRIDE_TO and
-    // EMAIL_OVERRIDE_FAKE_DOMAINS in .env redirects ONLY emails to those
-    // fake domains to one real inbox, so you can see what a demo account
-    // "would have" received - every other (real) recipient still gets
-    // their own email normally, exactly as production users should. The
-    // original intended recipient is kept in the subject line so you can
-    // tell multiple redirected emails apart.
-    // EMAIL_OVERRIDE_FAKE_DOMAINS is a comma-separated list, e.g.
-    // "college.edu,example.com". Leave both unset in production.
+    // organizer@college.edu, student1@college.edu) use fake addresses that
+    // can never receive real mail. Setting EMAIL_OVERRIDE_TO in .env
+    // redirects every outgoing email to that one real inbox instead, so
+    // you can see what a demo account "would have" received. The original
+    // intended recipient is kept in the subject line so you can tell
+    // multiple redirected emails apart. Leave EMAIL_OVERRIDE_TO unset in
+    // production so real users get their own emails.
     const override = process.env.EMAIL_OVERRIDE_TO;
-    const fakeDomains = (process.env.EMAIL_OVERRIDE_FAKE_DOMAINS || "")
-        .split(",")
-        .map(d => d.trim().toLowerCase())
-        .filter(Boolean);
-    const toDomain = (to.split("@")[1] || "").toLowerCase();
-    const shouldRedirect = override && fakeDomains.includes(toDomain);
-    const actualTo = shouldRedirect ? override : to;
-    const actualSubject = shouldRedirect ? `[to: ${to}] ${subject}` : subject;
+    const actualTo = override || to;
+    const actualSubject = (override && override !== to) ? `[to: ${to}] ${subject}` : subject;
 
     try {
         const res = await fetch(BREVO_API_URL, {
@@ -62,7 +53,7 @@ async function sendEmail(to, subject, text, html) {
             throw new Error(data.message || `Brevo API responded with status ${res.status}`);
         }
 
-        console.log(`[EMAIL SENT] To: ${actualTo}${shouldRedirect ? ` (redirected from ${to})` : ""} | Subject: ${actualSubject} | MessageId: ${data.messageId || "n/a"}`);
+        console.log(`[EMAIL SENT] To: ${actualTo}${override && override !== to ? ` (redirected from ${to})` : ""} | Subject: ${actualSubject} | MessageId: ${data.messageId || "n/a"}`);
         return data;
     } catch (err) {
         console.error(`[EMAIL ERROR] Failed to send to ${actualTo}:`, err.message);
