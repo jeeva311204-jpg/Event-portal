@@ -16,18 +16,6 @@ async function sendEmail(to, subject, text, html) {
         return null;
     }
 
-    // Optional testing aid: the seeded demo accounts (admin@college.edu,
-    // organizer@college.edu, student1@college.edu) use fake addresses that
-    // can never receive real mail. Setting EMAIL_OVERRIDE_TO in .env
-    // redirects every outgoing email to that one real inbox instead, so
-    // you can see what a demo account "would have" received. The original
-    // intended recipient is kept in the subject line so you can tell
-    // multiple redirected emails apart. Leave EMAIL_OVERRIDE_TO unset in
-    // production so real users get their own emails.
-    const override = process.env.EMAIL_OVERRIDE_TO;
-    const actualTo = override || to;
-    const actualSubject = (override && override !== to) ? `[to: ${to}] ${subject}` : subject;
-
     try {
         const res = await fetch(BREVO_API_URL, {
             method: "POST",
@@ -41,8 +29,8 @@ async function sendEmail(to, subject, text, html) {
                     email: process.env.BREVO_SENDER_EMAIL || process.env.SMTP_USER,
                     name: process.env.BREVO_SENDER_NAME || "College Event Portal"
                 },
-                to: [{ email: actualTo }],
-                subject: actualSubject,
+                to: [{ email: to }],
+                subject,
                 textContent: text,
                 htmlContent: html || `<p>${text}</p>`
             })
@@ -53,10 +41,10 @@ async function sendEmail(to, subject, text, html) {
             throw new Error(data.message || `Brevo API responded with status ${res.status}`);
         }
 
-        console.log(`[EMAIL SENT] To: ${actualTo}${override && override !== to ? ` (redirected from ${to})` : ""} | Subject: ${actualSubject} | MessageId: ${data.messageId || "n/a"}`);
+        console.log(`[EMAIL SENT] To: ${to} | Subject: ${subject} | MessageId: ${data.messageId || "n/a"}`);
         return data;
     } catch (err) {
-        console.error(`[EMAIL ERROR] Failed to send to ${actualTo}:`, err.message);
+        console.error(`[EMAIL ERROR] Failed to send to ${to}:`, err.message);
         throw err;
     }
 }

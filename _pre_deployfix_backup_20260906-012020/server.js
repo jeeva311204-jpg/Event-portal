@@ -11,9 +11,7 @@ if (missingSecrets.length) {
             `Set these environment variables before starting the server.`
         );
     } else {
-        // Development only â€” allow fallback with loud warning
-        console.warn(`
-â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•`);
+        console.warn("WARNING: Using development fallback secrets. Set JWT_SECRET and QR_SECRET in .env for production.");
         process.env.JWT_SECRET = process.env.JWT_SECRET || "dev_jwt_secret_change_this";
         process.env.QR_SECRET = process.env.QR_SECRET || "dev_qr_secret_change_this";
     }
@@ -35,19 +33,8 @@ const User = require("./models/User");
 const Event = require("./models/Event");
 
 const app = express();
-
-// Render (and most cloud hosts) sit their app behind a reverse proxy, so
-// every request arrives with an X-Forwarded-For header. Without this
-// setting, Express refuses to trust that header, which breaks
-// express-rate-limit's ability to identify individual clients correctly.
-// `1` trusts exactly one hop (the platform's own proxy) rather than
-// blindly trusting the whole chain.
-app.set("trust proxy", 1);
 const server = http.createServer(app);
 
-// CORS_ORIGIN can be a single origin or a comma-separated list, e.g.
-// "https://portal.example.com,https://admin.example.com". Falls back to
-// "*" only outside production so local dev keeps working without setup.
 const allowedOrigins = (process.env.CORS_ORIGIN || "").split(",").map(o => o.trim()).filter(Boolean);
 const corsOrigin = allowedOrigins.length ? allowedOrigins : (process.env.NODE_ENV === "production" ? [] : "*");
 
@@ -61,14 +48,10 @@ app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(express.json({ limit: "5mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
-// Simple liveness check for uptime monitors and Docker healthchecks.
-// Does not touch the database, so it stays fast and always responds
-// even if Mongo is briefly unreachable.
 app.get("/api/health", (req, res) => {
     res.json({ status: "ok", uptime: process.uptime() });
 });
 
-// Standard Routes
 app.use("/api", require("./routes/auth"));
 app.use("/api/admin", require("./routes/admin"));
 app.use("/api/events", require("./routes/events"));
@@ -80,13 +63,6 @@ app.use("/api/events", require("./routes/waitlist"));
 app.use("/api/scan", require("./routes/scan"));
 app.use("/api", require("./routes/certificate"));
 
-// The unauthenticated "/api/events/:eventId/attendees" route that used to
-// live here has been removed â€” it leaked every attendee's name/email/phone
-// to anyone, with no login check. The authenticated equivalent already
-// exists at GET /api/events/:id/registrations (admin/organizer only) in
-// routes/events.js, plus a CSV export at .../registrations/export.
-
-// Error Handling Middleware
 app.use((err, req, res, next) => {
     console.error(err);
     if (res.headersSent) return next(err);
@@ -147,10 +123,6 @@ async function seed() {
 
 const PORT = process.env.PORT || 5000;
 
-// Only auto-connect to Mongo and start listening when this file is run
-// directly (`node server.js` / `npm start`). When it's `require()`d â€” e.g.
-// by the Jest test suite in tests/ â€” we just export `app` so tests can hit
-// routes with supertest without opening a real port or DB connection.
 if (require.main === module) {
     connectDB()
         .then(seed)
@@ -159,9 +131,6 @@ if (require.main === module) {
             startReminderScheduler();
         });
 
-    // Graceful shutdown so in-flight requests finish and the Mongo
-    // connection closes cleanly instead of the process being killed
-    // mid-write.
     const mongoose = require("mongoose");
     function shutdown(signal) {
         console.log(`\n${signal} received: closing server gracefully...`);
@@ -181,7 +150,3 @@ if (require.main === module) {
 }
 
 module.exports = { app, server };
-
-
-
-
